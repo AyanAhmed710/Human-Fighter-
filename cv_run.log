@@ -1,0 +1,133 @@
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1787341613.895122   25964 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341613.952582   25964 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341614.015536   21368 landmark_projection_calculator.cc:186] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.
+W0000 00:00:1787341616.338070   16964 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341616.381217   16964 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341618.924723   10956 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341618.962589   10956 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341620.206160    3388 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341620.238977   22656 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341625.606893    9708 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341625.647378    9708 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341628.207622   26284 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341628.239789   26284 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341629.975136    1284 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341630.009404    1284 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341632.769908   26104 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341632.796179   10404 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341634.637021    7080 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341634.663650   23500 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341637.293283   22104 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341637.324881   22104 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341640.242941   16748 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341640.270057   25872 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341643.724106   14896 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341643.752563   14896 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341646.421280   22496 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341646.452373   22496 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341648.769540   16928 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341648.797238   16928 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341650.958379   22556 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341650.988461   22556 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341653.025262   24508 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341653.049743   24508 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341655.930788   25168 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1787341655.968541    8244 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+Traceback (most recent call last):
+  File "<string>", line 12, in <module>
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\json\__init__.py", line 179, in dump
+    for chunk in iterable:
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 429, in _iterencode
+    yield from _iterencode_list(o, _current_indent_level)
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 325, in _iterencode_list
+    yield from chunks
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 405, in _iterencode_dict
+    yield from chunks
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\json\encoder.py", line 376, in _iterencode_dict
+    raise TypeError(f'keys must be str, int, float, bool or None, '
+TypeError: keys must be str, int, float, bool or None, not int64
+epoch   0  train_loss 0.5646 acc 0.811  val_loss 0.7370 acc 0.748
+epoch   1  train_loss 0.3669 acc 0.928  val_loss 0.6146 acc 0.755
+epoch   2  train_loss 0.3435 acc 0.930  val_loss 0.5839 acc 0.791
+epoch   3  train_loss 0.3383 acc 0.931  val_loss 0.6266 acc 0.784
+epoch   4  train_loss 0.3372 acc 0.928  val_loss 0.6890 acc 0.806
+epoch   5  train_loss 0.2989 acc 0.947  val_loss 0.7589 acc 0.777
+epoch   6  train_loss 0.3112 acc 0.937  val_loss 0.8284 acc 0.755
+epoch   7  train_loss 0.3099 acc 0.943  val_loss 0.6092 acc 0.784
+epoch   8  train_loss 0.2820 acc 0.957  val_loss 0.8953 acc 0.741
+epoch   9  train_loss 0.3050 acc 0.949  val_loss 0.7631 acc 0.763
+epoch  10  train_loss 0.2714 acc 0.962  val_loss 0.6028 acc 0.777
+epoch  11  train_loss 0.2823 acc 0.954  val_loss 0.8211 acc 0.705
+epoch  12  train_loss 0.2625 acc 0.968  val_loss 0.6328 acc 0.806
+epoch  13  train_loss 0.2575 acc 0.968  val_loss 0.8542 acc 0.770
+epoch  14  train_loss 0.2694 acc 0.958  val_loss 0.8087 acc 0.799
+early stop at epoch 14 (no val improvement in 10 epochs)
+fold 0: held-out [1, 4, 8]  acc=0.806  per-participant={1: 1.0, 4: 1.0, 8: 0.6582278481012658}
+[[46  0  0]
+ [ 0 22 27]
+ [ 0  0 44]]
+epoch   0  train_loss 0.6144 acc 0.771  val_loss 0.3668 acc 0.910
+epoch   1  train_loss 0.4526 acc 0.866  val_loss 0.3393 acc 0.936
+epoch   2  train_loss 0.4091 acc 0.893  val_loss 0.3862 acc 0.904
+epoch   3  train_loss 0.3803 acc 0.904  val_loss 0.5266 acc 0.846
+epoch   4  train_loss 0.3809 acc 0.898  val_loss 0.3137 acc 0.942
+epoch   5  train_loss 0.3281 acc 0.929  val_loss 0.3612 acc 0.929
+epoch   6  train_loss 0.3180 acc 0.940  val_loss 0.3678 acc 0.929
+epoch   7  train_loss 0.3033 acc 0.943  val_loss 0.3736 acc 0.923
+epoch   8  train_loss 0.2794 acc 0.959  val_loss 0.3100 acc 0.955
+epoch   9  train_loss 0.2613 acc 0.967  val_loss 0.3257 acc 0.949
+epoch  10  train_loss 0.2706 acc 0.960  val_loss 0.2300 acc 0.981
+epoch  11  train_loss 0.3204 acc 0.933  val_loss 0.3286 acc 0.917
+epoch  12  train_loss 0.2866 acc 0.950  val_loss 0.3557 acc 0.936
+epoch  13  train_loss 0.2487 acc 0.967  val_loss 0.4010 acc 0.923
+epoch  14  train_loss 0.2552 acc 0.968  val_loss 0.2672 acc 0.962
+epoch  15  train_loss 0.2437 acc 0.970  val_loss 0.2824 acc 0.962
+epoch  16  train_loss 0.2287 acc 0.978  val_loss 0.3481 acc 0.929
+epoch  17  train_loss 0.2404 acc 0.971  val_loss 0.2973 acc 0.962
+epoch  18  train_loss 0.2219 acc 0.984  val_loss 0.2972 acc 0.955
+epoch  19  train_loss 0.2193 acc 0.982  val_loss 0.2674 acc 0.968
+epoch  20  train_loss 0.2217 acc 0.981  val_loss 0.3483 acc 0.942
+early stop at epoch 20 (no val improvement in 10 epochs)
+fold 1: held-out [3, 7, 9]  acc=0.981  per-participant={3: 0.9333333333333333, 7: 0.9852941176470589, 9: 1.0}
+[[53  0  0]
+ [ 0 48  3]
+ [ 0  0 52]]
+epoch   0  train_loss 0.6546 acc 0.731  val_loss 0.3363 acc 0.932
+epoch   1  train_loss 0.4506 acc 0.858  val_loss 0.3380 acc 0.938
+epoch   2  train_loss 0.4160 acc 0.876  val_loss 0.3493 acc 0.925
+epoch   3  train_loss 0.4282 acc 0.869  val_loss 0.3349 acc 0.932
+epoch   4  train_loss 0.4002 acc 0.880  val_loss 0.3214 acc 0.938
+epoch   5  train_loss 0.3916 acc 0.886  val_loss 0.3112 acc 0.932
+epoch   6  train_loss 0.3290 acc 0.926  val_loss 0.3224 acc 0.938
+epoch   7  train_loss 0.3202 acc 0.940  val_loss 0.2909 acc 0.938
+epoch   8  train_loss 0.2900 acc 0.943  val_loss 0.2697 acc 0.950
+epoch   9  train_loss 0.2576 acc 0.959  val_loss 0.2905 acc 0.944
+epoch  10  train_loss 0.2741 acc 0.956  val_loss 0.3270 acc 0.938
+epoch  11  train_loss 0.2692 acc 0.956  val_loss 0.2969 acc 0.950
+epoch  12  train_loss 0.2437 acc 0.969  val_loss 0.3338 acc 0.944
+epoch  13  train_loss 0.2446 acc 0.969  val_loss 0.2911 acc 0.957
+epoch  14  train_loss 0.2335 acc 0.971  val_loss 0.3455 acc 0.950
+epoch  15  train_loss 0.2152 acc 0.979  val_loss 0.2592 acc 0.957
+epoch  16  train_loss 0.2663 acc 0.960  val_loss 0.2796 acc 0.925
+epoch  17  train_loss 0.2307 acc 0.975  val_loss 0.2814 acc 0.950
+epoch  18  train_loss 0.2040 acc 0.987  val_loss 0.3012 acc 0.950
+epoch  19  train_loss 0.2146 acc 0.984  val_loss 0.2646 acc 0.975
+epoch  20  train_loss 0.2191 acc 0.979  val_loss 0.2923 acc 0.950
+epoch  21  train_loss 0.2317 acc 0.975  val_loss 0.2819 acc 0.963
+epoch  22  train_loss 0.2039 acc 0.990  val_loss 0.2643 acc 0.963
+epoch  23  train_loss 0.1987 acc 0.990  val_loss 0.2682 acc 0.963
+epoch  24  train_loss 0.2095 acc 0.988  val_loss 0.3374 acc 0.932
+epoch  25  train_loss 0.2085 acc 0.985  val_loss 0.2780 acc 0.944
+epoch  26  train_loss 0.2095 acc 0.989  val_loss 0.3262 acc 0.938
+epoch  27  train_loss 0.1931 acc 0.990  val_loss 0.2985 acc 0.938
+epoch  28  train_loss 0.1986 acc 0.989  val_loss 0.3305 acc 0.944
+epoch  29  train_loss 0.1920 acc 0.996  val_loss 0.3266 acc 0.938
+early stop at epoch 29 (no val improvement in 10 epochs)
+fold 2: held-out [2, 5, 6]  acc=0.975  per-participant={2: 1.0, 5: 0.9558823529411765, 6: 0.9864864864864865}
+[[54  0  0]
+ [ 0 55  3]
+ [ 0  1 48]]
+
+BiLSTM leave-participant-out CV: 0.921 +/- 0.081

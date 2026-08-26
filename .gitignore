@@ -1,0 +1,26 @@
+takken/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+data/interim/
+data/interim_hands/
+data/processed/
+runs/
+
+*.mp4
+*.pdf
+
+# raw training-clip source folders (large, not needed to run the game)
+punching/
+kicking/
+shooting/
+takeout-1-001/
+
+# portable Blender download (~900MB, conversion tool only, not game code)
+tools/blender-5.2.1-windows-x64/
+tools/blender.zip
+
+# Mixamo source FBX (raw mocap sources; converted .glb outputs in
+# assets/models/ are what the game actually loads and ARE tracked)
+assets/mixamo/

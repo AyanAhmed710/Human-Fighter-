@@ -1,0 +1,11 @@
+[
+  {
+    "fold": 0,
+    "held_participants": [
+      1,
+      4,
+      8
+    ],
+    "acc": 0.8057553956834532,
+    "per_participant": {
+      
