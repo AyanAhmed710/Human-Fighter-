@@ -38,7 +38,9 @@ from src.game.match import MAX_HEALTH, Match
 from src.game.player_input import PlayerCameraInput
 from src.game.real_entities import RealFighterEntity
 
-ARENA_HALF_WIDTH = 3.0
+ARENA_HALF_WIDTH = 1.0  # was 3.0 -- fighters 6 units apart, way beyond
+                         # punch/kick reach. 1.0 puts them 2 units apart,
+                         # close enough that attacks visibly land.
 P1_MODEL = "warrok"
 P2_MODEL = "vampire"
 

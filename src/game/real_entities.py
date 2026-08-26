@@ -83,12 +83,42 @@ class RealFighterEntity:
             return
 
         if player.state == "idle":
-            if self._current_clip != "Idle":
+            if self._current_clip is None:
+                # very first frame of the match -- show the real Idle clip
+                # once so the fighter isn't stuck in the raw bind pose.
                 self.actor.setP(0)
                 self.actor.setColorScale(1, 1, 1, 1)
-                self.actor.play("Idle")  # once, then holds the clip's last
-                                          # frame -- not .loop(), per request
+                self.actor.play("Idle")
                 self._current_clip = "Idle"
+            elif self._current_clip == "ko":
+                # fresh match after a restart -- undo the KO fall and show
+                # Idle again (this is a real "new match", not "attack ended").
+                self.actor.setP(0)
+                self.actor.setColorScale(1, 1, 1, 1)
+                self.actor.play("Idle")
+                self._current_clip = "Idle"
+            elif self._current_clip == "hit":
+                # just clear the red hit-flash tint. Don't touch the pose --
+                # per request, only a real hit-reaction clip should decide
+                # what the character looks like here (coming later).
+                self.actor.setColorScale(1, 1, 1, 1)
+                self._current_clip = "settled"
+            elif self._current_clip == "Shoot":
+                # Shoot's own last frame is an awkward hold pose. Snap
+                # straight to the Idle-to-fight clip's FINAL frame (the
+                # guard/fight-ready stance) instead -- pose(), not play(), so
+                # nothing visibly plays, it's an instant snap, same as the
+                # "no idle rerun" rule for Punch/Kick above.
+                last_frame = self.actor.getAnimControl("Idle").getNumFrames() - 1
+                self.actor.pose("Idle", last_frame)
+                self._current_clip = "settled"
+            # else ("Idle", a finished Punch/Kick clip, or "settled"): do
+            # nothing. Punch/Kick already hold their own last frame once they
+            # finish (Panda3D's play() stops and holds by default) -- re-
+            # triggering Idle here was the bug: it visibly played Idle's
+            # transition motion over that held pose every single time an
+            # attack ended, looking like "punch, then idle plays too". Now
+            # pressing 1/2/3 plays *only* that attack clip, full stop.
             return
 
         if player.state == "hit":
