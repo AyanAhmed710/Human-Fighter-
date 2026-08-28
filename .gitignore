@@ -2,6 +2,7 @@ takken/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.env
 
 data/interim/
 data/interim_hands/
@@ -24,3 +25,7 @@ tools/blender.zip
 # Mixamo source FBX (raw mocap sources; converted .glb outputs in
 # assets/models/ are what the game actually loads and ARE tracked)
 assets/mixamo/
+
+# Raw arena source FBX + textures (same deal -- converted assets/models/arena.glb
+# is what the game actually loads and IS tracked)
+assets/arena/

@@ -28,15 +28,23 @@ from src.inference import ActionSegmenter, predict_segment_v3
 
 MODEL_PATH = ROOT / "models" / "xgboost_v3.json"
 
-DEFAULT_COOLDOWN_SECONDS = 2.0   # shorter than live_inference_v3.py's 5s solo-demo
+DEFAULT_COOLDOWN_SECONDS = 3.0   # shorter than live_inference_v3.py's 5s solo-demo
                                   # default -- see MODEL_JOURNEY.md/game strategy
                                   # notes: 5s was tuned to avoid false triggers on
-                                  # one ambiguous frame, not a hard floor. Start
-                                  # here, retune after real two-player playtesting.
+                                  # one ambiguous frame, not a hard floor. 3s is
+                                  # the agreed in-game value: enough to stop one
+                                  # swing's follow-through re-triggering itself,
+                                  # short enough matches stay fast-paced.
 DEFAULT_MOTION_THRESHOLD = 0.08
 
 mp_pose = mp.solutions.pose
 mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils  # same skeleton/hand overlay used while
+                                          # testing the model live (scripts/
+                                          # live_inference_v3.py) -- drawn onto
+                                          # latest_frame so the in-game webcam
+                                          # preview shows it too, not just a
+                                          # plain camera feed.
 
 
 class PlayerCameraInput:
@@ -59,6 +67,12 @@ class PlayerCameraInput:
         self._thread = None
         self.connected = False   # camera opened OK -- game can show a warning if not
         self.last_person_visible = False  # for on-screen "no person detected" per player
+        self.latest_frame = None  # most recent raw BGR frame (post-mirror-flip), for
+                                   # the game's own on-screen webcam preview -- read by
+                                   # the main thread, written by this thread; a plain
+                                   # reference swap (no lock) is fine here since a numpy
+                                   # array assignment is atomic under the GIL and a
+                                   # dropped/duplicated preview frame is harmless
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -105,6 +119,18 @@ class PlayerCameraInput:
                 if segmenter.in_cooldown():
                     segmenter.push(np.full((N_POSE_LANDMARKS, 3), np.nan, dtype=np.float32),
                                     np.zeros(N_POSE_LANDMARKS, dtype=np.float32))
+                    # still read+mirror a frame so the on-screen preview stays
+                    # live during the cooldown window instead of freezing on
+                    # the last pre-cooldown frame for 3s after every action --
+                    # Pose/Hands themselves stay skipped (the actual expensive
+                    # part), same as before.
+                    ok, frame = cap.read()
+                    if ok:
+                        frame = cv2.flip(frame, 1)
+                        remaining = max(0.0, segmenter.cooldown_until - time.time())
+                        cv2.putText(frame, f"cooldown {remaining:.1f}s", (16, 40),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (90, 90, 90), 2)
+                        self.latest_frame = frame
                     time.sleep(0.01)
                     continue
 
@@ -124,6 +150,13 @@ class PlayerCameraInput:
                     lms = result.pose_world_landmarks.landmark
                     xyz = np.array([[lm.x, lm.y, lm.z] for lm in lms], dtype=np.float32)
                     vis = np.array([lm.visibility for lm in lms], dtype=np.float32)
+                    # same skeleton overlay drawn while testing the model live
+                    # (scripts/live_inference_v3.py) -- draws onto `frame`
+                    # in-place using image-space pose_landmarks, not the
+                    # metric pose_world_landmarks used for the xyz feature
+                    # above.
+                    if result.pose_landmarks is not None:
+                        mp_drawing.draw_landmarks(frame, result.pose_landmarks, mp_pose.POSE_CONNECTIONS)
                 else:
                     xyz = np.full((N_POSE_LANDMARKS, 3), np.nan, dtype=np.float32)
                     vis = np.zeros(N_POSE_LANDMARKS, dtype=np.float32)
@@ -135,6 +168,9 @@ class PlayerCameraInput:
                         idx = 0 if handedness.classification[0].label == "Left" else 1
                         hand_frame[idx] = np.array([[p.x, p.y, p.z] for p in lm_set.landmark],
                                                      dtype=np.float32)
+                        mp_drawing.draw_landmarks(frame, lm_set, mp_hands.HAND_CONNECTIONS)
+
+                self.latest_frame = frame  # after drawing, so the preview shows the skeleton overlay
 
                 segment = segmenter.push(xyz, vis, aux_frame=hand_frame)
                 if segment is not None:

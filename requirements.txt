@@ -75,6 +75,7 @@ networkx==3.4.2
 notebook==7.6.2
 notebook_shim==0.2.4
 numpy==1.26.4
+openai==3.5.0
 opencv-contrib-python==4.11.0.86
 opencv-python==4.10.0.84
 openpyxl==3.1.5
@@ -95,6 +96,7 @@ pycparser==3.0
 Pygments==2.21.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
 python-json-logger==4.2.0
 pytz==2026.3.post1
 pywinpty==3.0.5

@@ -12,10 +12,15 @@ Ursina's Entity wrapper -- Ursina IS Panda3D underneath and shares the same
 alongside Ursina's own Entities; Actor's animation-clip API (loop/play/pose)
 has no Ursina equivalent, so there's no reason to fight Ursina's wrapper here.
 
-No real Hit-reaction or Death/KO clip was downloaded (see MODEL_JOURNEY-style
-note in the chat response) -- hit uses a color-flash on the current pose, KO
-uses a crude coded forward-pitch fall, same idea as entities.py's fallback,
-until real clips are added.
+Hit uses a real Mixamo clip now (assets/mixamo/Hit Reaction.fbx, converted
+via tools/convert_hit_reaction.py into <prefix>_HitReact.glb) -- only its
+first third plays (the flinch/impact snap), not the full ~1.6s clip: the
+gameplay hit-stun window (match.py's HIT_REACT_DURATION) stays a snappy
+0.25s so getting jabbed doesn't freeze you for a second and a half, but the
+pose it holds once that window ends is a real recoiled-from-impact frame
+instead of a flat color tint. No real Death/KO clip was downloaded -- KO
+still uses a crude coded forward-pitch fall, same idea as entities.py's
+fallback, until one is added.
 """
 from pathlib import Path
 
@@ -30,6 +35,17 @@ MODEL_DIR = Path(r"C:\Data_Tekken\assets\models")
 # run this, that's the first thing to adjust: try 0/90/180/270 here, or flip
 # which offset applies to facing>0 vs facing<0 below.
 HEADING_OFFSET = 90.0
+
+# fraction of the HitReact clip's frames to actually play -- see module
+# docstring: the full clip is a ~1.6s flinch+recover arc, and we only want
+# the front slice (the actual impact/recoil), not the long recovery-to-
+# neutral tail -- that part's skipped by snapping straight to the Idle
+# guard pose once match.py's HIT_REACT_DURATION ends. match.py's
+# HIT_REACT_DURATION is derived FROM this fraction (24/30 = 0.8s for 0.5 of
+# HitReact's 49 frames) -- change this, change that too, or the snap fires
+# before the clip finishes playing and the pose visibly pops mid-motion
+# (exactly what happened at the old 0.35/0.25s pairing).
+HIT_REACT_FRACTION = 0.5
 
 
 class RealFighterEntity:
@@ -60,7 +76,8 @@ class RealFighterEntity:
         # under its own name just by being the modelRoot's own animation
         # (confirmed: getAnimControl("Idle") returned None without this).
         self.actor = Actor(p("base"), {"Idle": p("base"), "Punch": p("Punch"),
-                                        "Kick": p("Kick"), "Shoot": p("Shoot")})
+                                        "Kick": p("Kick"), "Shoot": p("Shoot"),
+                                        "HitReact": p("HitReact")})
         self.actor.reparentTo(parent)
         self.actor.setPos(x, 0, 0)
         self.actor.setH(HEADING_OFFSET if facing > 0 else HEADING_OFFSET + 180)
@@ -97,18 +114,14 @@ class RealFighterEntity:
                 self.actor.setColorScale(1, 1, 1, 1)
                 self.actor.play("Idle")
                 self._current_clip = "Idle"
-            elif self._current_clip == "hit":
-                # just clear the red hit-flash tint. Don't touch the pose --
-                # per request, only a real hit-reaction clip should decide
-                # what the character looks like here (coming later).
+            elif self._current_clip in ("hit", "Shoot"):
+                # Shoot's own last frame and HitReact's cut-off frame (see
+                # HIT_REACT_FRACTION) are both awkward holds, not real
+                # stances -- snap straight to the Idle-to-fight clip's FINAL
+                # frame (the guard/fight-ready pose) instead. pose(), not
+                # play(), so nothing visibly plays, it's an instant snap,
+                # same as the "no idle rerun" rule for Punch/Kick above.
                 self.actor.setColorScale(1, 1, 1, 1)
-                self._current_clip = "settled"
-            elif self._current_clip == "Shoot":
-                # Shoot's own last frame is an awkward hold pose. Snap
-                # straight to the Idle-to-fight clip's FINAL frame (the
-                # guard/fight-ready stance) instead -- pose(), not play(), so
-                # nothing visibly plays, it's an instant snap, same as the
-                # "no idle rerun" rule for Punch/Kick above.
                 last_frame = self.actor.getAnimControl("Idle").getNumFrames() - 1
                 self.actor.pose("Idle", last_frame)
                 self._current_clip = "settled"
@@ -123,8 +136,14 @@ class RealFighterEntity:
 
         if player.state == "hit":
             if self._current_clip != "hit":
-                self.actor.stop()
-                self.actor.setColorScale(1, 0.4, 0.4, 1)
+                self.actor.setColorScale(1, 0.55, 0.55, 1)  # lighter tint now
+                                                              # that a real
+                                                              # recoil pose
+                                                              # also reads as
+                                                              # "just got hit"
+                num_frames = self.actor.getAnimControl("HitReact").getNumFrames()
+                end_frame = max(1, int(num_frames * HIT_REACT_FRACTION))
+                self.actor.play("HitReact", fromFrame=0, toFrame=end_frame)
                 self._current_clip = "hit"
             return
 
