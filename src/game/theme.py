@@ -113,6 +113,47 @@ def style_button_text(button, font=None, color_=TEXT):
     return button
 
 
+def safe_animate(entity, method_name: str, value, **kwargs):
+    """Wraps an Entity.animate_<x>() call (animate_scale, animate_x,
+    animate_position, ...) in a try/except -- ANY entity whose position/
+    scale/etc. gets animated is at risk of this if its own screen can be
+    destroyed while the animation might still be in flight (screen
+    transitions, Back/Quit/Rematch/Menu buttons, a round/phase change
+    tearing down a HUD element, restart() firing mid-VS-intro, etc.): these
+    animate_* calls' step mechanics read the entity's CURRENT value (e.g.
+    scale_getter -> panda3d's getScale()) each time a step actually runs.
+    If the underlying NodePath has already been destroyed by then, that
+    read throws AssertionError: !is_empty() from deep inside panda3d --
+    confirmed via a real crash right after NameEntry's submit button
+    destroyed its own screen mid-click, and again via CharacterSelect's
+    card-pick pulse still being mid-animation when FIGHT! destroyed the
+    whole screen a moment later. Best-effort: skip silently instead of
+    crashing the whole game over a decorative animation.
+
+    IMPORTANT: if you need a delay before the animation starts, do NOT pass
+    delay= here -- schedule it yourself instead:
+        invoke(safe_animate, entity, "animate_scale", value, duration=..., delay=X)
+    animate_*'s own delay= kwarg hands the actual work off to ursina's
+    internal callback machinery, decoupled from this function's own call
+    stack -- the failure (if the entity's gone by then) happens on that
+    LATER frame, inside ursina's own scheduled callback, so wrapping just
+    this call would not catch it. Scheduling the delay yourself via
+    invoke() means THIS function (try/except and all) is what actually
+    runs once the delay elapses -- see hover_button's on_click below for
+    the pattern."""
+    try:
+        getattr(entity, method_name)(value, **kwargs)
+    except Exception:
+        pass
+
+
+def safe_animate_scale(entity, value, **kwargs):
+    """safe_animate(entity, "animate_scale", value, **kwargs) -- see that
+    docstring for the full explanation. Kept as its own name since this is
+    by far the most common case (every button's hover/press pulse)."""
+    safe_animate(entity, "animate_scale", value, **kwargs)
+
+
 def hover_button(button, sfx_module=None, pulse=1.06):
     """Wires a real Ursina Button with a snappy hover/press feel -- scale
     pulse on mouse-enter, settle on mouse-exit, quick squash on click. Kept
@@ -124,36 +165,15 @@ def hover_button(button, sfx_module=None, pulse=1.06):
     base_scale = button.scale
     orig_click = button.on_click
 
-    def _safe_animate_scale(value, **kwargs):
-        # many buttons' real on_click destroys their own parent screen
-        # (screen transitions, "Enter the Arena", Back/Quit/Rematch/Menu,
-        # etc.) -- animate_scale's delay=/duration= mechanics read the
-        # entity's CURRENT scale (scale_getter -> panda3d's getScale())
-        # each time a step actually runs, including deferred/delayed steps.
-        # If the underlying NodePath has already been destroyed by then,
-        # that read throws AssertionError: !is_empty() from deep inside
-        # panda3d -- confirmed via a real crash right after NameEntry's
-        # submit button destroyed its own screen mid-click. try/except here
-        # (not at the call site -- the delayed leg's failure happens on a
-        # LATER frame, inside ursina's own scheduled callback, so wrapping
-        # the outer call wouldn't catch it) makes the squash/pulse purely
-        # best-effort: skip silently if the button's gone by the time this
-        # particular step runs, instead of crashing the whole game over a
-        # decorative animation.
-        try:
-            button.animate_scale(value, **kwargs)
-        except Exception:
-            pass
-
     def on_enter():
-        _safe_animate_scale(base_scale * pulse, duration=0.09, curve=curve.out_expo)
+        safe_animate_scale(button, base_scale * pulse, duration=0.09, curve=curve.out_expo)
         if sfx_module is not None:
             sfx_module.play_hover()
     def on_exit():
-        _safe_animate_scale(base_scale, duration=0.12, curve=curve.out_expo)
+        safe_animate_scale(button, base_scale, duration=0.12, curve=curve.out_expo)
     def on_click():
-        _safe_animate_scale(base_scale * 0.94, duration=0.05, curve=curve.out_expo)
-        invoke(_safe_animate_scale, base_scale, duration=0.12, curve=curve.out_expo, delay=0.05)
+        safe_animate_scale(button, base_scale * 0.94, duration=0.05, curve=curve.out_expo)
+        invoke(safe_animate_scale, button, base_scale, duration=0.12, curve=curve.out_expo, delay=0.05)
         if orig_click:
             orig_click()
 

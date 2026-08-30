@@ -275,8 +275,9 @@ class CharacterSelect(Entity):
             self.cards[k].color = theme.PANEL_LIGHT if selected else theme.PANEL
             self.cards[k].edge.color = theme.VICTORY if selected else theme.BORDER
             self.glows[k].color = color.rgba32(255, 207, 74, 45) if selected else color.rgba32(0, 0, 0, 0)
-            self.choose_buttons[k].animate_scale(
-                self.choose_buttons[k].scale * (1.08 if selected else 1.0), duration=0.12)
+            theme.safe_animate_scale(
+                self.choose_buttons[k], self.choose_buttons[k].scale * (1.08 if selected else 1.0),
+                duration=0.12)
         self.hint.color = theme.ACCENT_P1
         self.hint.text = (f"P1: {CHAR_INFO[key]['label']}   P2: {CHAR_INFO[other]['label']}"
                            f"   -- hit FIGHT! when ready")

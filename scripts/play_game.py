@@ -398,8 +398,15 @@ class Game:
             fg = theme.ACCENT_P1 if attacker_side == "p1" else theme.ACCENT_P2
             self.streak_text.text = f"{self._streak_count} HIT STREAK"
             self.streak_text.color = fg
-            self.streak_text.animate_scale(2.5, duration=0.06, curve=curve.out_expo)
-            self.streak_text.animate_scale(2.2, duration=0.12, delay=0.06, curve=curve.out_expo)
+            # theme.safe_animate_scale, not a raw .animate_scale() call --
+            # see its docstring: streak_text can get torn down (round/match
+            # end, teardown()) while this pop is still mid-animation, and a
+            # raw call crashes the whole game when that happens. The
+            # delayed second leg schedules its OWN invoke() rather than
+            # passing delay= through, for the same reason (see docstring).
+            theme.safe_animate_scale(self.streak_text, 2.5, duration=0.06, curve=curve.out_expo)
+            invoke(theme.safe_animate_scale, self.streak_text, 2.2, duration=0.12,
+                   curve=curve.out_expo, delay=0.06)
         else:
             self.streak_text.text = ""
 
@@ -466,9 +473,12 @@ class Game:
         # VS_INTRO_DURATION before the "FIGHT!" flash replaces it.
         p1_name.x = -1.5
         p2_name.x = 1.9
-        p1_name.animate_x(-0.78, duration=0.35, curve=curve.out_expo)
-        p2_name.animate_x(0.78, duration=0.35, curve=curve.out_expo)
-        vs.animate_scale(3.4, duration=0.3, delay=0.15, curve=curve.out_expo)
+        # theme.safe_animate*, not raw calls -- see safe_animate's docstring:
+        # restart() can tear down this whole VS screen (_destroy_vs_screen())
+        # while these are still mid-flight (e.g. mashing R during the intro).
+        theme.safe_animate(p1_name, "animate_x", -0.78, duration=0.35, curve=curve.out_expo)
+        theme.safe_animate(p2_name, "animate_x", 0.78, duration=0.35, curve=curve.out_expo)
+        invoke(theme.safe_animate_scale, vs, 3.4, duration=0.3, curve=curve.out_expo, delay=0.15)
         return root
 
     def _destroy_vs_screen(self):
@@ -910,7 +920,7 @@ class Game:
         # (spec: "animations should be fast and responsive", not a slow
         # cinematic wipe over a screen the player is trying to read).
         root.scale = 0.94
-        root.animate_scale(1.0, duration=0.22, curve=curve.out_expo)
+        theme.safe_animate_scale(root, 1.0, duration=0.22, curve=curve.out_expo)
         return root
 
     def teardown(self):
