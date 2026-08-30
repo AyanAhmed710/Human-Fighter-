@@ -106,6 +106,20 @@ class FighterEntity:
             return
 
         if player.state == "idle":
+            if player.is_blocking:
+                # bouncy guard stance -- both arms raised, faster/shorter
+                # bob than the resting idle sway so it visibly reads as "on
+                # guard" rather than just standing still. No separate clip
+                # needed here (unlike real_entities.py's Block.glb) -- the
+                # procedural rig is posed directly every frame already.
+                self.left_arm.rotation_z = -55 * self.facing
+                self.right_arm.rotation_z = 55 * self.facing
+                self.left_leg.rotation_z = 0
+                self.right_leg.rotation_z = 0
+                self.torso.rotation_x = 0
+                self.torso.color = self.body_color
+                self.torso.y = 1.2 + 0.035 * math.sin(time.time() * 8)
+                return
             self._reset_pose()
             self.torso.y = 1.2 + 0.02 * math.sin(time.time() * 2)  # idle bob
             return

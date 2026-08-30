@@ -23,6 +23,7 @@ still uses a crude coded forward-pitch fall, same idea as entities.py's
 fallback, until one is added.
 """
 from pathlib import Path
+import time
 
 from direct.actor.Actor import Actor
 from panda3d.core import Filename, NodePath
@@ -75,15 +76,35 @@ class RealFighterEntity:
         # file) needs to be listed here too -- it did NOT auto-register
         # under its own name just by being the modelRoot's own animation
         # (confirmed: getAnimControl("Idle") returned None without this).
-        self.actor = Actor(p("base"), {"Idle": p("base"), "Punch": p("Punch"),
-                                        "Kick": p("Kick"), "Shoot": p("Shoot"),
-                                        "HitReact": p("HitReact")})
+        anim_files = {"Idle": p("base"), "Punch": p("Punch"), "Kick": p("Kick"),
+                      "Shoot": p("Shoot"), "HitReact": p("HitReact")}
+        # Block sequence: "IdleToFight" (Mixamo's "Standing Idle To Fight
+        # Idle", one-shot transition into the guard) plays once, then
+        # "Block" (Mixamo's "Bouncing Fight Idle", a real LOOP -- not
+        # one-shot like Punch/Kick/Shoot) takes over for as long as the
+        # guard's held -- see match.py's Player.is_blocking and this class's
+        # sync() below. Converted via tools/convert_block_anims.py, same
+        # anim-only pipeline as HitReact. Each is added to Actor's clip dict
+        # only if its file actually exists -- asking Panda3D to load a path
+        # that isn't there raises at construction, which would crash the
+        # whole game over a missing decorative clip instead of just falling
+        # back to holding the Idle pose (see sync()).
+        self._has_idle_to_fight_clip = (MODEL_DIR / f"{model_prefix}_IdleToFight.glb").is_file()
+        self._has_block_clip = (MODEL_DIR / f"{model_prefix}_Block.glb").is_file()
+        if self._has_idle_to_fight_clip:
+            anim_files["IdleToFight"] = p("IdleToFight")
+        if self._has_block_clip:
+            anim_files["Block"] = p("Block")
+        self.actor = Actor(p("base"), anim_files)
         self.actor.reparentTo(parent)
         self.actor.setPos(x, 0, 0)
         self.actor.setH(HEADING_OFFSET if facing > 0 else HEADING_OFFSET + 180)
 
         self._current_clip = None
         self._last_action_start = None
+        self._block_transition_start = None  # time.time() when IdleToFight
+                                              # started, for the transition
+                                              # ->loop handoff in sync()
 
     @property
     def root(self):
@@ -100,6 +121,36 @@ class RealFighterEntity:
             return
 
         if player.state == "idle":
+            # Block: holding the guard stance -- match.py never changes
+            # player.state for this (a blocked hit is fully absorbed in
+            # place, see _apply_damage), so this is checked first, every
+            # idle frame, ahead of the settle/first-frame logic below.
+            # Two stages: IdleToFight plays ONCE (one-shot transition into
+            # the guard), then Block takes over as a real LOOP for as long
+            # as the guard's held -- the handoff is timed off IdleToFight's
+            # own frame count (assumed 30fps export, same convention as
+            # match.py's ACTION_STATS comment) since Panda3D's Actor has no
+            # built-in "on clip finished" callback wired up here.
+            if player.is_blocking and self._has_block_clip:
+                if self._current_clip not in ("IdleToFight", "Block"):
+                    self.actor.setColorScale(1, 1, 1, 1)
+                    if self._has_idle_to_fight_clip:
+                        self.actor.play("IdleToFight")
+                        self._current_clip = "IdleToFight"
+                        self._block_transition_start = time.time()
+                    else:
+                        # no transition clip converted -- straight into the
+                        # loop, still correct, just less polished.
+                        self.actor.loop("Block")
+                        self._current_clip = "Block"
+                elif self._current_clip == "IdleToFight":
+                    num_frames = self.actor.getAnimControl("IdleToFight").getNumFrames()
+                    transition_duration = num_frames / 30.0
+                    if time.time() - self._block_transition_start >= transition_duration:
+                        self.actor.loop("Block")
+                        self._current_clip = "Block"
+                # else: already looping Block -- nothing to do.
+                return
             if self._current_clip is None:
                 # very first frame of the match -- show the real Idle clip
                 # once so the fighter isn't stuck in the raw bind pose.
@@ -114,13 +165,16 @@ class RealFighterEntity:
                 self.actor.setColorScale(1, 1, 1, 1)
                 self.actor.play("Idle")
                 self._current_clip = "Idle"
-            elif self._current_clip in ("hit", "Shoot"):
-                # Shoot's own last frame and HitReact's cut-off frame (see
-                # HIT_REACT_FRACTION) are both awkward holds, not real
-                # stances -- snap straight to the Idle-to-fight clip's FINAL
+            elif self._current_clip in ("hit", "Shoot", "Block", "IdleToFight"):
+                # Shoot's own last frame, HitReact's cut-off frame (see
+                # HIT_REACT_FRACTION), and just having released the guard
+                # (whether it fully reached the Block loop or the guard key
+                # let go mid-transition) are all awkward holds, not real
+                # stances -- snap straight to the Idle clip's own FINAL
                 # frame (the guard/fight-ready pose) instead. pose(), not
                 # play(), so nothing visibly plays, it's an instant snap,
-                # same as the "no idle rerun" rule for Punch/Kick above.
+                # same as the "no idle rerun" rule for Punch/Kick above --
+                # this is the "release the block key -> back to idle" step.
                 self.actor.setColorScale(1, 1, 1, 1)
                 last_frame = self.actor.getAnimControl("Idle").getNumFrames() - 1
                 self.actor.pose("Idle", last_frame)
