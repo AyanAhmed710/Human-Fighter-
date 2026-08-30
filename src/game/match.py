@@ -19,15 +19,17 @@ import time
 # real_entities.py plays a real 3-clip sequence for a crit instead of just
 # holding HitReact's cut-off frame (HitReact full -> Stunned -> Getting Up,
 # trimmed to frame 156 per an explicit user call -- the full clip is a
-# ground-to-standing recovery, 259 frames, way more than needed here) --
-# this duration MUST match that sequence's real total length (49 + 65 + 156
-# frames at the pipeline's standard 30fps assumption = 270/30 = 9.0s
-# exactly) or match.py would flip the defender back to "idle" while the
-# getting-up animation is still mid-motion, visibly cutting it off. If
-# those clips/frame counts ever change, this needs to change with them.
+# ground-to-standing recovery, 259 frames, way more than needed here). At
+# normal (1x) speed that's 49+65+156=270 frames @ 30fps = 9.0s -- per a
+# later request to bring the total down to 5s, real_entities.py now plays
+# all 3 stages at CRIT_PLAYBACK_RATE=1.8x instead of trimming further
+# (270/(30*1.8)=5.0s exactly). This duration MUST match that real total or
+# match.py would flip the defender back to "idle" while the getting-up
+# animation is still mid-motion, visibly cutting it off -- change the
+# clips/frame counts/playback rate, change this too.
 CRIT_CHANCE = 0.25
 CRIT_DAMAGE_MULTIPLIER = 1.75
-CRIT_STUN_DURATION = 9.0
+CRIT_STUN_DURATION = 5.0
 
 ACTION_STATS = {
     # damage: HP off a 100-HP bar. anim_duration: how long the attacker is
@@ -56,6 +58,14 @@ ACTION_STATS = {
 HIT_REACT_DURATION = 24 / 30
 MAX_HEALTH = 100
 
+# Block stamina: can't just hold the guard up forever -- past
+# MAX_BLOCK_HOLD_DURATION of CONTINUOUS holding, the guard drops on its own
+# and can't be raised again until BLOCK_COOLDOWN_DURATION passes. Releasing
+# and re-holding before hitting the cap resets the held-since timer (only
+# an unbroken hold counts against it) -- see Player.guard_up/_update_guard.
+MAX_BLOCK_HOLD_DURATION = 5.0
+BLOCK_COOLDOWN_DURATION = 3.0
+
 
 class Player:
     def __init__(self, name: str):
@@ -72,15 +82,26 @@ class Player:
         self.was_crit_hit = False    # set True on this player by _apply_damage the frame a
                                       # crit lands on them; stays True through the whole stun
                                       # (state=="hit") for the renderer/commentary to read
-        self.is_blocking = False     # external input, not derived from anything in this
+        self.is_blocking = False     # RAW external input, not derived from anything in this
                                       # file -- set every frame by whatever's driving this
                                       # player (src/game/player_input.py's elbow-angle guard
                                       # detection, a held keyboard key, or a replicated
                                       # "block" message from the network peer -- see
-                                      # scripts/play_game.py's Game.update()). Read at the
-                                      # moment damage would land (_apply_damage), not when
-                                      # the attack was thrown -- you're safe if your guard is
-                                      # up when the hit actually arrives, not when it started.
+                                      # scripts/play_game.py's Game.update()). "Raw" because
+                                      # it's just what the human is asking for -- whether the
+                                      # guard is actually UP right now (guard_up, below) also
+                                      # depends on the block-stamina rule this file enforces.
+        self.guard_up = False        # the flag _apply_damage/the renderer actually check --
+                                      # is_blocking AND not currently stamina-locked out. Kept
+                                      # up to date every frame by Match.update() (see
+                                      # _update_guard) regardless of whether damage is being
+                                      # applied that frame, since the 5s hold cap/3s cooldown
+                                      # need continuous real-time tracking, not just an
+                                      # at-impact check.
+        self._block_held_since = None   # time.time() the CURRENT unbroken hold began, or
+                                         # None if not currently holding -- resets on release
+        self._block_cooldown_until = 0.0  # time.time() deadline before guard_up can go True
+                                           # again after exceeding MAX_BLOCK_HOLD_DURATION
         self.was_blocked = False     # set True on this player by _apply_damage the frame an
                                       # incoming hit was fully absorbed by their own guard --
                                       # same "renderer/sfx can react" pattern as was_crit_hit
@@ -126,11 +147,36 @@ class Match:
         player.pending_damage = (opponent, damage, now + stats["impact_delay"], is_crit)
         return True
 
+    def _update_guard(self, player: Player, now: float):
+        """Block-stamina bookkeeping -- see MAX_BLOCK_HOLD_DURATION/
+        BLOCK_COOLDOWN_DURATION's docstring. Runs every frame regardless of
+        whether a hit is actually landing, since the 5s cap only means
+        anything if it's tracked continuously against the wall clock."""
+        if now < player._block_cooldown_until:
+            player.guard_up = False
+            return
+        if not player.is_blocking:
+            player._block_held_since = None
+            player.guard_up = False
+            return
+        if player._block_held_since is None:
+            player._block_held_since = now
+        elif now - player._block_held_since >= MAX_BLOCK_HOLD_DURATION:
+            # held continuously too long -- guard drops on its own, locked
+            # out until the cooldown passes, even if the human keeps
+            # holding the button/pose the whole time.
+            player._block_cooldown_until = now + BLOCK_COOLDOWN_DURATION
+            player._block_held_since = None
+            player.guard_up = False
+            return
+        player.guard_up = True
+
     def update(self):
         """Call once per game-loop frame. Applies any due damage, clears
         expired states, checks KO/win condition."""
         now = time.time()
         for player in (self.p1, self.p2):
+            self._update_guard(player, now)
             if player.pending_damage is not None:
                 target, damage, apply_at, is_crit = player.pending_damage
                 if now >= apply_at:
@@ -149,7 +195,7 @@ class Match:
                 self.winner = self.p1
 
     def _apply_damage(self, target: Player, damage: int, is_crit: bool = False):
-        if target.is_blocking:
+        if target.guard_up:
             # Full block -- guard absorbs the hit entirely: no health loss,
             # no hit-react/stun, target.state doesn't change at all (still
             # whatever it was -- normally "idle" holding the stance). A crit

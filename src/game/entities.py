@@ -106,7 +106,7 @@ class FighterEntity:
             return
 
         if player.state == "idle":
-            if player.is_blocking:
+            if player.guard_up:  # is_blocking AND not stamina-locked-out -- see match.py
                 # bouncy guard stance -- both arms raised, faster/shorter
                 # bob than the resting idle sway so it visibly reads as "on
                 # guard" rather than just standing still. No separate clip

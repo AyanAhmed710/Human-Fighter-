@@ -30,3 +30,7 @@ assets/mixamo/
 # Raw arena source FBX + textures (same deal -- converted assets/models/arena.glb
 # is what the game actually loads and IS tracked)
 assets/arena/
+
+# ad hoc diagnostic screenshots dropped in the repo root while debugging
+# with me (e.g. Mixamo editor previews) -- not game code/assets
+diagnose*.png

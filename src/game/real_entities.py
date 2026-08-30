@@ -62,9 +62,16 @@ ATTACK_FROM_BLOCK_SETTLE = 0.08
 # Exact frame to cut "Getting Up" at, for the crit-stun sequence -- picked
 # directly by the user against Mixamo's own preview player (frame 154/258
 # there was still down on hands/knees, not standing; 156 was their call).
-# match.py's CRIT_STUN_DURATION is derived from this number -- change one,
-# change the other.
 CRIT_GETTING_UP_CUTOFF_FRAME = 156
+
+# The 3 crit-stun clips (HitReact full + Stunned + GettingUp trimmed to
+# CRIT_GETTING_UP_CUTOFF_FRAME) run 49+65+156=270 frames total at normal
+# (1x) speed -- 270/30fps = 9.0s. Per an explicit user request to bring the
+# whole sequence down to 5s, this plays all 3 stages faster (not trimmed
+# further) at 9.0/5.0 = 1.8x: 270/(30*1.8) = 5.0s exactly. match.py's
+# CRIT_STUN_DURATION must match this real total or the stun would end
+# while GettingUp is still mid-motion -- change one, change both.
+CRIT_PLAYBACK_RATE = 1.8
 
 
 class RealFighterEntity:
@@ -106,8 +113,9 @@ class RealFighterEntity:
         # Idle", one-shot transition into the guard) plays once, then
         # "Block" (Mixamo's "Bouncing Fight Idle", a real LOOP -- not
         # one-shot like Punch/Kick/Shoot) takes over for as long as the
-        # guard's held -- see match.py's Player.is_blocking and this class's
-        # sync() below. Converted via tools/convert_block_anims.py, same
+        # guard's held (and allowed -- see match.py's Player.guard_up, which
+        # folds in the 5s hold cap/3s cooldown, and this class's sync()
+        # below). Converted via tools/convert_block_anims.py, same
         # anim-only pipeline as HitReact. Each is added to Actor's clip dict
         # only if its file actually exists -- asking Panda3D to load a path
         # that isn't there raises at construction, which would crash the
@@ -184,7 +192,8 @@ class RealFighterEntity:
             # own frame count (assumed 30fps export, same convention as
             # match.py's ACTION_STATS comment) since Panda3D's Actor has no
             # built-in "on clip finished" callback wired up here.
-            if player.is_blocking and self._has_block_clip:
+            if player.guard_up and self._has_block_clip:  # is_blocking AND not
+                                                           # stamina-locked-out -- see match.py
                 if self._current_clip not in ("IdleToFight", "Block"):
                     self.actor.setColorScale(1, 1, 1, 1)
                     if self._has_idle_to_fight_clip:
@@ -255,9 +264,11 @@ class RealFighterEntity:
                                                               # "just got hit"
                 if player.was_crit_hit and self._has_crit_clips:
                     # crit: play the FULL HitReact clip (not the fraction-
-                    # cut normal hits use), then this same branch's "not a
-                    # new hit" leg below advances through Stunned and
-                    # GettingUp as each stage's own duration elapses.
+                    # cut normal hits use) at CRIT_PLAYBACK_RATE, then this
+                    # same branch's "not a new hit" leg below advances
+                    # through Stunned and GettingUp (same rate) as each
+                    # stage's own (rate-adjusted) duration elapses.
+                    self.actor.setPlayRate(CRIT_PLAYBACK_RATE, "HitReact")
                     self.actor.play("HitReact")
                     self._current_clip = "critHit"
                     self._crit_stage_started_at = time.time()
@@ -272,13 +283,15 @@ class RealFighterEntity:
             # cut HitReact pose, nothing more to do for those).
             if self._current_clip == "critHit":
                 num_frames = self.actor.getAnimControl("HitReact").getNumFrames()
-                if time.time() - self._crit_stage_started_at >= num_frames / 30.0:
+                if time.time() - self._crit_stage_started_at >= num_frames / (30.0 * CRIT_PLAYBACK_RATE):
+                    self.actor.setPlayRate(CRIT_PLAYBACK_RATE, "Stunned")
                     self.actor.play("Stunned")
                     self._current_clip = "critStunned"
                     self._crit_stage_started_at = time.time()
             elif self._current_clip == "critStunned":
                 num_frames = self.actor.getAnimControl("Stunned").getNumFrames()
-                if time.time() - self._crit_stage_started_at >= num_frames / 30.0:
+                if time.time() - self._crit_stage_started_at >= num_frames / (30.0 * CRIT_PLAYBACK_RATE):
+                    self.actor.setPlayRate(CRIT_PLAYBACK_RATE, "GettingUp")
                     self.actor.play("GettingUp", fromFrame=0, toFrame=CRIT_GETTING_UP_CUTOFF_FRAME)
                     self._current_clip = "critGettingUp"
             # else "hit" (normal) or "critGettingUp": already showing the
