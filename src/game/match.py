@@ -15,13 +15,19 @@ import time
 
 # Critical hits: a flat per-attack chance to land extra hard and stun the
 # defender well past the normal hit-react window (see _apply_damage/update
-# below -- the stun just reuses player.state == "hit"/state_until, so
-# real_entities.py needs no changes: it already holds the HitReact clip's
-# last frame + red tint for however long state_until says, normal hit or
-# crit alike).
+# below -- the stun just reuses player.state == "hit"/state_until).
+# real_entities.py plays a real 3-clip sequence for a crit instead of just
+# holding HitReact's cut-off frame (HitReact full -> Stunned -> Getting Up,
+# trimmed to frame 156 per an explicit user call -- the full clip is a
+# ground-to-standing recovery, 259 frames, way more than needed here) --
+# this duration MUST match that sequence's real total length (49 + 65 + 156
+# frames at the pipeline's standard 30fps assumption = 270/30 = 9.0s
+# exactly) or match.py would flip the defender back to "idle" while the
+# getting-up animation is still mid-motion, visibly cutting it off. If
+# those clips/frame counts ever change, this needs to change with them.
 CRIT_CHANCE = 0.25
 CRIT_DAMAGE_MULTIPLIER = 1.75
-CRIT_STUN_DURATION = 3.0
+CRIT_STUN_DURATION = 9.0
 
 ACTION_STATS = {
     # damage: HP off a 100-HP bar. anim_duration: how long the attacker is

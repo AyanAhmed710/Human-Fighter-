@@ -59,6 +59,13 @@ HIT_REACT_FRACTION = 0.5
 # impact_delay, not a real "recovery time" combat-mechanic change.
 ATTACK_FROM_BLOCK_SETTLE = 0.08
 
+# Exact frame to cut "Getting Up" at, for the crit-stun sequence -- picked
+# directly by the user against Mixamo's own preview player (frame 154/258
+# there was still down on hands/knees, not standing; 156 was their call).
+# match.py's CRIT_STUN_DURATION is derived from this number -- change one,
+# change the other.
+CRIT_GETTING_UP_CUTOFF_FRAME = 156
+
 
 class RealFighterEntity:
     def __init__(self, model_prefix: str, x: float, facing: int, parent: NodePath):
@@ -112,6 +119,21 @@ class RealFighterEntity:
             anim_files["IdleToFight"] = p("IdleToFight")
         if self._has_block_clip:
             anim_files["Block"] = p("Block")
+        # Crit-hit stun sequence: HitReact (full clip this time, not the
+        # HIT_REACT_FRACTION cut normal hits use) -> Stunned (dazed hold) ->
+        # GettingUp (trimmed to CRIT_GETTING_UP_CUTOFF_FRAME -- the full
+        # clip is a real ground-to-standing recovery, 259 frames/~8.6s, way
+        # more than wanted here; the cut point was picked directly by the
+        # user against Mixamo's own preview, not tuned by me). Needs BOTH
+        # clips to run the sequence -- falls back to the short normal-hit
+        # behavior for crits too if either is missing, see sync().
+        self._has_stunned_clip = (MODEL_DIR / f"{model_prefix}_Stunned.glb").is_file()
+        self._has_getting_up_clip = (MODEL_DIR / f"{model_prefix}_GettingUp.glb").is_file()
+        self._has_crit_clips = self._has_stunned_clip and self._has_getting_up_clip
+        if self._has_stunned_clip:
+            anim_files["Stunned"] = p("Stunned")
+        if self._has_getting_up_clip:
+            anim_files["GettingUp"] = p("GettingUp")
         self.actor = Actor(p("base"), anim_files)
         self.actor.reparentTo(parent)
         self.actor.setPos(x, 0, 0)
@@ -129,6 +151,13 @@ class RealFighterEntity:
                                       # cosmetic (match.py's own damage timer
                                       # already started ticking the moment
                                       # try_action() fired, untouched by this)
+        self._last_hit_start = None  # edge-detect a NEW hit-stun beginning,
+                                      # independent of which crit sub-stage
+                                      # clip is currently showing
+        self._crit_stage_started_at = None  # time.time() when the current
+                                             # crit sub-stage clip started,
+                                             # for the hit->stunned->gettingup
+                                             # handoffs in sync()
 
     @property
     def root(self):
@@ -189,16 +218,19 @@ class RealFighterEntity:
                 self.actor.setColorScale(1, 1, 1, 1)
                 self.actor.play("Idle")
                 self._current_clip = "Idle"
-            elif self._current_clip in ("hit", "Shoot", "Block", "IdleToFight"):
+            elif self._current_clip in ("hit", "Shoot", "Block", "IdleToFight", "critGettingUp"):
                 # Shoot's own last frame, HitReact's cut-off frame (see
-                # HIT_REACT_FRACTION), and just having released the guard
+                # HIT_REACT_FRACTION), just having released the guard
                 # (whether it fully reached the Block loop or the guard key
-                # let go mid-transition) are all awkward holds, not real
-                # stances -- snap straight to the Idle clip's own FINAL
-                # frame (the guard/fight-ready pose) instead. pose(), not
-                # play(), so nothing visibly plays, it's an instant snap,
-                # same as the "no idle rerun" rule for Punch/Kick above --
-                # this is the "release the block key -> back to idle" step.
+                # let go mid-transition), and the crit stun sequence finally
+                # finishing (match.py's CRIT_STUN_DURATION expiring right as
+                # GettingUp's trimmed playback ends) are all awkward holds,
+                # not real stances -- snap straight to the Idle clip's own
+                # FINAL frame (the guard/fight-ready pose) instead. pose(),
+                # not play(), so nothing visibly plays, it's an instant
+                # snap, same as the "no idle rerun" rule for Punch/Kick
+                # above -- this is the "release the block key -> back to
+                # idle" / "recovered from the crit stun -> back to idle" step.
                 self.actor.setColorScale(1, 1, 1, 1)
                 last_frame = self.actor.getAnimControl("Idle").getNumFrames() - 1
                 self.actor.pose("Idle", last_frame)
@@ -213,16 +245,47 @@ class RealFighterEntity:
             return
 
         if player.state == "hit":
-            if self._current_clip != "hit":
+            is_new_hit = self._last_hit_start != player.state_started_at
+            self._last_hit_start = player.state_started_at
+            if is_new_hit:
                 self.actor.setColorScale(1, 0.55, 0.55, 1)  # lighter tint now
                                                               # that a real
                                                               # recoil pose
                                                               # also reads as
                                                               # "just got hit"
+                if player.was_crit_hit and self._has_crit_clips:
+                    # crit: play the FULL HitReact clip (not the fraction-
+                    # cut normal hits use), then this same branch's "not a
+                    # new hit" leg below advances through Stunned and
+                    # GettingUp as each stage's own duration elapses.
+                    self.actor.play("HitReact")
+                    self._current_clip = "critHit"
+                    self._crit_stage_started_at = time.time()
+                else:
+                    num_frames = self.actor.getAnimControl("HitReact").getNumFrames()
+                    end_frame = max(1, int(num_frames * HIT_REACT_FRACTION))
+                    self.actor.play("HitReact", fromFrame=0, toFrame=end_frame)
+                    self._current_clip = "hit"
+                return
+            # not a new hit this frame -- advance the crit sub-stage machine
+            # if we're mid-sequence (normal hits just hold their fraction-
+            # cut HitReact pose, nothing more to do for those).
+            if self._current_clip == "critHit":
                 num_frames = self.actor.getAnimControl("HitReact").getNumFrames()
-                end_frame = max(1, int(num_frames * HIT_REACT_FRACTION))
-                self.actor.play("HitReact", fromFrame=0, toFrame=end_frame)
-                self._current_clip = "hit"
+                if time.time() - self._crit_stage_started_at >= num_frames / 30.0:
+                    self.actor.play("Stunned")
+                    self._current_clip = "critStunned"
+                    self._crit_stage_started_at = time.time()
+            elif self._current_clip == "critStunned":
+                num_frames = self.actor.getAnimControl("Stunned").getNumFrames()
+                if time.time() - self._crit_stage_started_at >= num_frames / 30.0:
+                    self.actor.play("GettingUp", fromFrame=0, toFrame=CRIT_GETTING_UP_CUTOFF_FRAME)
+                    self._current_clip = "critGettingUp"
+            # else "hit" (normal) or "critGettingUp": already showing the
+            # right thing -- just keep holding/playing until match.py's own
+            # state_until flips state back to "idle" (the idle branch's
+            # "elif ... in (..., critGettingUp): snap to Idle" handles the
+            # final return-to-idle step from there).
             return
 
         if player.state == "attacking" and player.current_action:
