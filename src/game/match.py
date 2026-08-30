@@ -160,11 +160,31 @@ class Match:
         target.was_blocked = False
         now = time.time()
         target.health = max(0, target.health - damage)
+        if target.health <= 0:
+            target.was_crit_hit = is_crit
+            target.state = "ko"
+            target.state_started_at = now
+            target.state_until = now + 1e9  # stays KO'd, no auto-clear
+            return
+
+        new_stun_until = now + (CRIT_STUN_DURATION if is_crit else HIT_REACT_DURATION)
+        if target.state == "hit" and now < target.state_until and target.state_until > new_stun_until:
+            # Already mid a BIGGER stun (a crit still playing out its
+            # animation, typically) -- this hit's damage already landed
+            # above, but must NOT cut that longer recovery short by
+            # resetting state_until/was_crit_hit to a smaller value. A
+            # stunned target can't fight back, so the attacker is free to
+            # keep landing follow-up hits during the whole window -- every
+            # one of those used to unconditionally overwrite the stun,
+            # which is exactly why a crit's stunned->getting-up sequence
+            # almost never finished playing: the very next hit (often not
+            # itself a crit) landed well inside the old window and reset it
+            # to a much shorter one. Got dramatically more likely to fire
+            # once CRIT_STUN_DURATION grew from 3s to 9s for the real
+            # animated sequence -- far more time for a follow-up hit to
+            # land first. KO (above) always overrides this regardless.
+            return
         target.state_started_at = now
         target.was_crit_hit = is_crit
-        if target.health <= 0:
-            target.state = "ko"
-            target.state_until = now + 1e9  # stays KO'd, no auto-clear
-        else:
-            target.state = "hit"
-            target.state_until = now + (CRIT_STUN_DURATION if is_crit else HIT_REACT_DURATION)
+        target.state = "hit"
+        target.state_until = new_stun_until
