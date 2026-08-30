@@ -48,6 +48,17 @@ HEADING_OFFSET = 90.0
 # (exactly what happened at the old 0.35/0.25s pairing).
 HIT_REACT_FRACTION = 0.5
 
+# How long to hold the settled-Idle pose before actually starting a punch/
+# kick/shoot clip that was thrown WHILE blocking -- purely a render-side
+# beat so the swing doesn't look like it pops straight out of the raised
+# guard pose. Deliberately small: match.py's own impact_delay timer (0.55-
+# 1.10s depending on the move) already started counting the instant
+# try_action() fired, unaffected by this -- too large a value here would
+# make the visual swing start late enough to look out of sync with when the
+# hit actually lands, so this stays a small fraction of the shortest move's
+# impact_delay, not a real "recovery time" combat-mechanic change.
+ATTACK_FROM_BLOCK_SETTLE = 0.08
+
 
 class RealFighterEntity:
     def __init__(self, model_prefix: str, x: float, facing: int, parent: NodePath):
@@ -72,11 +83,17 @@ class RealFighterEntity:
             # with "not found on model path" even though the file exists.
             return Filename.fromOsSpecific(str(MODEL_DIR / f"{model_prefix}_{suffix}.glb"))
 
-        # "Idle" (embedded directly in the base file, not a separate anim
-        # file) needs to be listed here too -- it did NOT auto-register
-        # under its own name just by being the modelRoot's own animation
-        # (confirmed: getAnimControl("Idle") returned None without this).
-        anim_files = {"Idle": p("base"), "Punch": p("Punch"), "Kick": p("Kick"),
+        # "Idle" needs to be listed here too even when it's the base file's
+        # own embedded animation -- it did NOT auto-register under its own
+        # name just by being the modelRoot's own animation (confirmed:
+        # getAnimControl("Idle") returned None without this). Prefer a
+        # dedicated <prefix>_Idle.glb (Mixamo's "Idle" clip, converted via
+        # tools/convert_block_anims.py) if one's been converted -- falls
+        # back to the base file's own embedded clip otherwise, so nothing
+        # breaks for a character that hasn't had one made yet.
+        idle_path = MODEL_DIR / f"{model_prefix}_Idle.glb"
+        anim_files = {"Idle": p("Idle") if idle_path.is_file() else p("base"),
+                      "Punch": p("Punch"), "Kick": p("Kick"),
                       "Shoot": p("Shoot"), "HitReact": p("HitReact")}
         # Block sequence: "IdleToFight" (Mixamo's "Standing Idle To Fight
         # Idle", one-shot transition into the guard) plays once, then
@@ -105,6 +122,13 @@ class RealFighterEntity:
         self._block_transition_start = None  # time.time() when IdleToFight
                                               # started, for the transition
                                               # ->loop handoff in sync()
+        self._pending_attack = None  # (clip_name, time.time() to actually start
+                                      # it) -- see sync()'s attacking branch: an
+                                      # attack fired while blocking settles
+                                      # through Idle for a beat first, purely
+                                      # cosmetic (match.py's own damage timer
+                                      # already started ticking the moment
+                                      # try_action() fired, untouched by this)
 
     @property
     def root(self):
@@ -209,6 +233,26 @@ class RealFighterEntity:
             is_new_action = self._last_action_start != player.state_started_at
             self._last_action_start = player.state_started_at
             if is_new_action:
+                self._pending_attack = None
+                if self._current_clip in ("Block", "IdleToFight"):
+                    # was blocking/mid-transition-into-block -- settle
+                    # through Idle first (instant pose snap, same as the
+                    # release-the-guard case above) instead of popping
+                    # straight from the raised guard into the swing; the
+                    # real attack clip starts a beat later, see
+                    # ATTACK_FROM_BLOCK_SETTLE's docstring for why this
+                    # doesn't touch match.py's own damage timing.
+                    last_frame = self.actor.getAnimControl("Idle").getNumFrames() - 1
+                    self.actor.pose("Idle", last_frame)
+                    self._current_clip = "settled"
+                    self._pending_attack = (clip, time.time() + ATTACK_FROM_BLOCK_SETTLE)
+                else:
+                    self.actor.setColorScale(1, 1, 1, 1)
+                    self.actor.play(clip)
+                    self._current_clip = clip
+            if self._pending_attack is not None and time.time() >= self._pending_attack[1]:
+                pending_clip = self._pending_attack[0]
                 self.actor.setColorScale(1, 1, 1, 1)
-                self.actor.play(clip)
-                self._current_clip = clip
+                self.actor.play(pending_clip)
+                self._current_clip = pending_clip
+                self._pending_attack = None

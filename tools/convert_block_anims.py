@@ -22,6 +22,7 @@ import bpy
 ROOT = Path(r"C:\Data_Tekken")
 # (source FBX, action name to give it, output filename suffix)
 CLIPS = [
+    (ROOT / "assets/mixamo/Idle.fbx", "Idle", "Idle"),
     (ROOT / "assets/mixamo/Standing Idle To Fight Idle.fbx", "IdleToFight", "IdleToFight"),
     (ROOT / "assets/mixamo/Bouncing Fight Idle.fbx", "Block", "Block"),
 ]
