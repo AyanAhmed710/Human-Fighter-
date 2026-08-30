@@ -172,9 +172,9 @@ class MainMenu(Entity):
         self.settings_panel = Entity(parent=self, enabled=False)
         theme.panel(self.settings_panel, (0.66, 0.52), (0, -0.05), z=0.3)
         theme.section_title(self.settings_panel, "CONTROLS", position=(-0.3, 0.15), scale=1.6)
-        Text("Player 1: 1=punch  2=kick  3=shoot", parent=self.settings_panel,
+        Text("Player 1: 1=punch  2=kick  3=shoot  4=hold to block", parent=self.settings_panel,
              position=(-0.3, 0.06), scale=1.1, color=theme.TEXT, **theme.font_kwargs(theme.FONT_BODY))
-        Text("Player 2: 8=punch  9=kick  0=shoot", parent=self.settings_panel,
+        Text("Player 2: 8=punch  9=kick  0=shoot  7=hold to block", parent=self.settings_panel,
              position=(-0.3, 0.0), scale=1.1, color=theme.TEXT, **theme.font_kwargs(theme.FONT_BODY))
         Text("R=restart   ESC/Q=quit   C=free camera", parent=self.settings_panel,
              position=(-0.3, -0.06), scale=1.1, color=theme.TEXT, **theme.font_kwargs(theme.FONT_BODY))

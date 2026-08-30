@@ -66,6 +66,18 @@ class Player:
         self.was_crit_hit = False    # set True on this player by _apply_damage the frame a
                                       # crit lands on them; stays True through the whole stun
                                       # (state=="hit") for the renderer/commentary to read
+        self.is_blocking = False     # external input, not derived from anything in this
+                                      # file -- set every frame by whatever's driving this
+                                      # player (src/game/player_input.py's elbow-angle guard
+                                      # detection, a held keyboard key, or a replicated
+                                      # "block" message from the network peer -- see
+                                      # scripts/play_game.py's Game.update()). Read at the
+                                      # moment damage would land (_apply_damage), not when
+                                      # the attack was thrown -- you're safe if your guard is
+                                      # up when the hit actually arrives, not when it started.
+        self.was_blocked = False     # set True on this player by _apply_damage the frame an
+                                      # incoming hit was fully absorbed by their own guard --
+                                      # same "renderer/sfx can react" pattern as was_crit_hit
 
     def is_locked(self) -> bool:
         """True while mid-attack-animation or mid-hit-reaction -- an action
@@ -131,6 +143,15 @@ class Match:
                 self.winner = self.p1
 
     def _apply_damage(self, target: Player, damage: int, is_crit: bool = False):
+        if target.is_blocking:
+            # Full block -- guard absorbs the hit entirely: no health loss,
+            # no hit-react/stun, target.state doesn't change at all (still
+            # whatever it was -- normally "idle" holding the stance). A crit
+            # that gets blocked is just a blocked hit, not a bigger one.
+            target.was_blocked = True
+            target.was_crit_hit = False
+            return
+        target.was_blocked = False
         now = time.time()
         target.health = max(0, target.health - damage)
         target.state_started_at = now

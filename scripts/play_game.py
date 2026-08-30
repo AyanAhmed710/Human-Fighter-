@@ -39,7 +39,7 @@ import numpy as np
 from panda3d.core import AmbientLight, DirectionalLight, Filename
 from panda3d.core import Texture as PandaTexture
 from ursina import (Button, EditorCamera, Entity, Text, Texture, Ursina, Vec3, application, camera,
-                     color, curve, destroy, invoke, load_texture, scene, time)
+                     color, curve, destroy, held_keys, invoke, load_texture, scene, time)
 
 from src.game.commentator import Commentator
 from src.game.entities import FighterEntity
@@ -84,6 +84,12 @@ KEYBOARD_BINDINGS = {
     "1": ("p1", "punch"), "2": ("p1", "kick"), "3": ("p1", "shoot"),
     "8": ("p2", "punch"), "9": ("p2", "kick"), "0": ("p2", "shoot"),
 }
+# Block is a HELD stance, not a one-shot action -- read straight off ursina's
+# held_keys every frame (not the discrete _pressed_since_last_frame tap set
+# KEYBOARD_BINDINGS above uses), same shape as the camera path's continuous
+# PlayerCameraInput.blocking. "4"/"7" round out each player's key cluster
+# (1/2/3/4, 7/8/9/0) without touching the existing punch/kick/shoot keys.
+BLOCK_KEYS = {"p1": "4", "p2": "7"}
 
 # Round-flow timing (seconds). Match logic (try_action/match.update) is
 # frozen outside the "fight" phase -- see Game.update()'s phase machine --
@@ -281,6 +287,8 @@ class Game:
                     self.input2 = local_input
                     self.cam_preview2 = WebcamPreview("right", "YOUR CAM")
 
+        self._last_sent_blocking = False  # edge-trigger for net.send({"type":"block",...}) --
+                                           # only online play uses this, harmless elsewhere
         self.rain = None  # rain disabled per user request
 
         # AI live commentary -- entirely optional, self-disables with no
@@ -667,11 +675,30 @@ class Game:
             if local_action is not None:
                 _try(local_player, local_action)
                 self.net.send_action(local_action)
+
+            # block is a held STATE, not a one-shot action -- applied to the
+            # local player every frame regardless (so the local match always
+            # has the true up-to-the-frame answer for "am I guarding right
+            # now"), but only sent to the peer on change, since that's the
+            # only thing the peer's copy of this player actually needs to
+            # know to resolve damage correctly (see match.py's
+            # _apply_damage -- it reads is_blocking at the moment a hit
+            # would land, so the peer's copy just needs to be eventually
+            # consistent with the last known state, not per-frame-fresh).
+            local_blocking = (held_keys[BLOCK_KEYS["p1"]] if self.keyboard_mode
+                               else bool((self.input1 if self.net_side == "p1" else self.input2).blocking))
+            local_player.is_blocking = local_blocking
+            if local_blocking != self._last_sent_blocking:
+                self.net.send({"type": "block", "blocking": local_blocking})
+                self._last_sent_blocking = local_blocking
+
             for msg in self.net.poll():
                 if msg.get("type") == "action":
                     _try(remote_player, msg["action"])
                 elif msg.get("type") == "restart":
                     self.restart(_from_remote=True)
+                elif msg.get("type") == "block":
+                    remote_player.is_blocking = msg["blocking"]
         elif self.keyboard_mode:
             for key in list(_pressed_since_last_frame):
                 side, action = KEYBOARD_BINDINGS[key]
@@ -679,6 +706,8 @@ class Game:
                 _try(player, action)
             _pressed_since_last_frame.clear()  # one action per physical keypress,
                                                 # not one per frame it's held
+            self.match.p1.is_blocking = held_keys[BLOCK_KEYS["p1"]]
+            self.match.p2.is_blocking = held_keys[BLOCK_KEYS["p2"]]
         else:
             action1 = self.input1.get_action_nowait()
             if action1 is not None:
@@ -686,6 +715,8 @@ class Game:
             action2 = self.input2.get_action_nowait()
             if action2 is not None:
                 _try(self.match.p2, action2[0])
+            self.match.p1.is_blocking = bool(self.input1.blocking)
+            self.match.p2.is_blocking = bool(self.input2.blocking)
 
         health_before = (self.match.p1.health, self.match.p2.health)
         self.match.update()

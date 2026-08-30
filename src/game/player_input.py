@@ -46,6 +46,48 @@ mp_drawing = mp.solutions.drawing_utils  # same skeleton/hand overlay used while
                                           # preview shows it too, not just a
                                           # plain camera feed.
 
+# Block-stance detection: a plain geometric heuristic (elbow angle), not
+# another ML model -- unlike punch/kick/shoot (a swing, needs the trained
+# classifier to tell a real attack from noise) a guard stance is just "both
+# arms bent to roughly a right angle and held there", cheap to check every
+# frame directly off the raw pose landmarks. Runs independently of
+# ActionSegmenter/the xgboost model entirely.
+_BLOCK_ELBOW_MIN_DEG = 60.0
+_BLOCK_ELBOW_MAX_DEG = 120.0  # "almost 90" -- wide band since MediaPipe's
+                               # per-frame elbow-angle estimate jitters a fair
+                               # bit even holding a stance perfectly still
+_BLOCK_MIN_VISIBILITY = 0.5
+
+_L_SH, _L_EL, _L_WR = (mp_pose.PoseLandmark.LEFT_SHOULDER.value,
+                       mp_pose.PoseLandmark.LEFT_ELBOW.value,
+                       mp_pose.PoseLandmark.LEFT_WRIST.value)
+_R_SH, _R_EL, _R_WR = (mp_pose.PoseLandmark.RIGHT_SHOULDER.value,
+                       mp_pose.PoseLandmark.RIGHT_ELBOW.value,
+                       mp_pose.PoseLandmark.RIGHT_WRIST.value)
+
+
+def _joint_angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Angle at vertex b, in degrees, formed by points a-b-c -- generic
+    3-point angle (here: shoulder-elbow-wrist, so this is the elbow bend)."""
+    ba, bc = a - b, c - b
+    cos_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)
+    return float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+
+def _is_block_stance(xyz: np.ndarray, vis: np.ndarray) -> bool:
+    """Both elbows bent to roughly a right angle. Deliberately just the
+    elbow-angle check -- no wrist-height/hand-position gate on top of it --
+    so a real false-positive pose (hands on hips, arms crossed) could also
+    read as blocking. Tighten with an extra landmark check if that turns out
+    to matter in practice; kept simple for now on purpose."""
+    needed = (_L_SH, _L_EL, _L_WR, _R_SH, _R_EL, _R_WR)
+    if any(vis[i] < _BLOCK_MIN_VISIBILITY for i in needed):
+        return False
+    left = _joint_angle_deg(xyz[_L_SH], xyz[_L_EL], xyz[_L_WR])
+    right = _joint_angle_deg(xyz[_R_SH], xyz[_R_EL], xyz[_R_WR])
+    return (_BLOCK_ELBOW_MIN_DEG <= left <= _BLOCK_ELBOW_MAX_DEG
+            and _BLOCK_ELBOW_MIN_DEG <= right <= _BLOCK_ELBOW_MAX_DEG)
+
 
 class PlayerCameraInput:
     """queue.get_nowait() from the main game thread each frame to drain
@@ -67,6 +109,9 @@ class PlayerCameraInput:
         self._thread = None
         self.connected = False   # camera opened OK -- game can show a warning if not
         self.last_person_visible = False  # for on-screen "no person detected" per player
+        self.blocking = False    # live guard-stance state, read every frame by the game
+                                  # loop (unlike punch/kick/shoot, not a queued one-shot
+                                  # event -- see _is_block_stance above)
         self.latest_frame = None  # most recent raw BGR frame (post-mirror-flip), for
                                    # the game's own on-screen webcam preview -- read by
                                    # the main thread, written by this thread; a plain
@@ -119,6 +164,12 @@ class PlayerCameraInput:
                 if segmenter.in_cooldown():
                     segmenter.push(np.full((N_POSE_LANDMARKS, 3), np.nan, dtype=np.float32),
                                     np.zeros(N_POSE_LANDMARKS, dtype=np.float32))
+                    # no fresh landmarks this frame (Pose/Hands skipped below)
+                    # to check a stance from -- also matches a real fighting
+                    # game's "can't block during your own attack's recovery"
+                    # convention, since this cooldown only runs right after
+                    # THIS player's own swing.
+                    self.blocking = False
                     # still read+mirror a frame so the on-screen preview stays
                     # live during the cooldown window instead of freezing on
                     # the last pre-cooldown frame for 3s after every action --
@@ -157,9 +208,11 @@ class PlayerCameraInput:
                     # above.
                     if result.pose_landmarks is not None:
                         mp_drawing.draw_landmarks(frame, result.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+                    self.blocking = _is_block_stance(xyz, vis)
                 else:
                     xyz = np.full((N_POSE_LANDMARKS, 3), np.nan, dtype=np.float32)
                     vis = np.zeros(N_POSE_LANDMARKS, dtype=np.float32)
+                    self.blocking = False
 
                 hand_frame = np.full((2, N_HAND_LANDMARKS, 3), np.nan, dtype=np.float32)
                 if hand_result.multi_hand_landmarks and hand_result.multi_handedness:
