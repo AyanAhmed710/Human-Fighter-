@@ -71,6 +71,15 @@ class _NetSession:
     role = None  # "host" | "client", set by the subclass
 
     def __init__(self, sock: socket.socket):
+        # Nagle's algorithm (TCP's default) batches/delays small outgoing
+        # packets waiting for either more data or the previous packet's ACK
+        # -- fine for bulk transfer, but this connection only ever sends
+        # small, infrequent messages (one action every second or so), which
+        # is exactly the pattern Nagle adds up to ~40ms of pure waiting to.
+        # Disabling it (TCP_NODELAY) sends each action the instant it's
+        # queued -- on a real LAN that turns "network delay" into low-single-
+        # digit ms (WiFi ping to the router/AP), not a perceptible input lag.
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.sock = sock
         self.inbox: "queue.Queue[dict]" = queue.Queue()
         self.connected = True
