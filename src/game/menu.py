@@ -236,8 +236,15 @@ class CharacterSelect(Entity):
         # screenshot, fixed by deriving every y from the card's own bounds).
         CARD_Y, CARD_H = -0.08, 0.5
         card_top, card_bottom = CARD_Y + CARD_H / 2, CARD_Y - CARD_H / 2
-        x = -0.34
+        # WARROK's card nudged further left (was -0.34, symmetric with
+        # VAMPIRE's +0.34) -- its right edge was overlapping the VAMPIRE
+        # preview model standing behind it in the arena gap, hiding it
+        # (confirmed via screenshot). Explicit per-key x instead of the
+        # derived x/x+=0.68 stepping so only WARROK's card moves --
+        # VAMPIRE's stays exactly where it was, no reason to touch it too.
+        CARD_X = {"warrok": -0.40, "vampire": 0.34}
         for key, info in CHAR_INFO.items():
+            x = CARD_X[key]
             glow = Entity(parent=self, model="quad", color=color.rgba32(0, 0, 0, 0),
                            scale=(0.34, CARD_H + 0.02), position=(x, CARD_Y), z=0.55)
             self.glows[key] = glow
@@ -260,7 +267,6 @@ class CharacterSelect(Entity):
             btn = _styled_button("CHOOSE", self, (x, card_bottom + 0.045), (0.24, 0.06),
                                  on_click=Func(self.pick, key))
             self.choose_buttons[key] = btn
-            x += 0.68
 
         _styled_button("FIGHT!", self, (0, card_bottom - 0.09), (0.26, 0.09),
                        accent=theme.VICTORY, on_click=self._confirm, text_scale=1.2)
