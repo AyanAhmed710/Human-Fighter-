@@ -20,16 +20,17 @@ import time
 # holding HitReact's cut-off frame (HitReact full -> Stunned -> Getting Up,
 # trimmed to frame 156 per an explicit user call -- the full clip is a
 # ground-to-standing recovery, 259 frames, way more than needed here). At
-# normal (1x) speed that's 49+65+156=270 frames @ 30fps = 9.0s -- per a
-# later request to bring the total down to 5s, real_entities.py now plays
-# all 3 stages at CRIT_PLAYBACK_RATE=1.8x instead of trimming further
-# (270/(30*1.8)=5.0s exactly). This duration MUST match that real total or
-# match.py would flip the defender back to "idle" while the getting-up
-# animation is still mid-motion, visibly cutting it off -- change the
-# clips/frame counts/playback rate, change this too.
+# normal (1x) speed that's 49+65+156=270 frames @ 30fps = 9.0s -- brought
+# down in 2 steps per explicit requests (first 5s/1.8x, now 3s/3.0x) by
+# playing all 3 stages faster (CRIT_PLAYBACK_RATE in real_entities.py)
+# instead of trimming further: 270/(30*3.0)=3.0s exactly. This duration
+# MUST match that real total or match.py would flip the defender back to
+# "idle" while the getting-up animation is still mid-motion, visibly
+# cutting it off -- change the clips/frame counts/playback rate, change
+# this too.
 CRIT_CHANCE = 0.25
 CRIT_DAMAGE_MULTIPLIER = 1.75
-CRIT_STUN_DURATION = 5.0
+CRIT_STUN_DURATION = 3.0
 
 ACTION_STATS = {
     # damage: HP off a 100-HP bar. anim_duration: how long the attacker is
@@ -46,16 +47,16 @@ ACTION_STATS = {
     "shoot":  {"damage": 10, "anim_duration": 36 / 30, "impact_delay": 0.70},
 }
 
-# Was a flat 0.25s guess from before any real hit-reaction clip existed.
-# real_entities.py now plays a real HitReact clip on hit (49 frames,
-# confirmed via getAnimControl().getNumFrames()) but only its first
-# HIT_REACT_FRACTION=0.5 (24 frames) -- the rest is recovery-to-neutral we
-# don't need since sync() snaps straight to the Idle guard pose once this
-# window ends anyway. Left at the old 0.25s, that snap fired while the clip
-# was still mid-recoil (24 frames/30fps=0.8s > 0.25s), popping the pose
-# mid-motion instead of letting the flinch finish -- 0.8s matches it exactly.
-# If HIT_REACT_FRACTION changes, this needs to change with it.
-HIT_REACT_DURATION = 24 / 30
+# real_entities.py plays a real HitReact clip on hit (49 frames, confirmed
+# via getAnimControl().getNumFrames()) but only its first
+# HIT_REACT_FRACTION (12 frames = 0.25 of 49) -- the rest is recovery-to-
+# neutral we don't need since sync() snaps straight to the Idle guard pose
+# once this window ends anyway. Was 24 frames/0.5 fraction/0.8s -- halved
+# again per an explicit "getting stuck for ~1s on every normal hit" report;
+# only the crit sequence should feel like a real stun now. If
+# HIT_REACT_FRACTION changes, this needs to change with it (must match the
+# real clip duration or the idle-snap fires mid-recoil, popping the pose).
+HIT_REACT_DURATION = 12 / 30
 MAX_HEALTH = 100
 
 # Block stamina: can't just hold the guard up forever -- past

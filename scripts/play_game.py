@@ -124,13 +124,17 @@ SHAKE_MAGNITUDE_HIT = 0.05
 SHAKE_DURATION_KO = 0.35
 SHAKE_MAGNITUDE_KO = 0.18
 
-# Critical hits (src/game/match.py: CRIT_CHANCE=25%, 1.75x damage, 3s stun)
-# land harder than a normal hit but short of a KO -- shake/hitstop sized
-# between the two so a crit visibly reads as "bigger than a normal hit"
-# without stealing the KO's own punch.
+# Critical hits (src/game/match.py: CRIT_CHANCE=25%, 1.75x damage,
+# CRIT_STUN_DURATION-long stun) land harder than a normal hit but short of
+# a KO -- shake/hitstop sized between the two so a crit visibly reads as
+# "bigger than a normal hit" without stealing the KO's own punch.
 HITSTOP_DURATION_CRIT = 0.10
 SHAKE_DURATION_CRIT = 0.22
 SHAKE_MAGNITUDE_CRIT = 0.11
+CRIT_BANNER_DURATION = 0.9  # how long "CRITICAL HIT!" holds in the round_banner
+                            # spot before clearing back to blank -- same text
+                            # element "FIGHT!"/"K.O.!" use, just a quick flash
+                            # instead of holding until the next phase change
 
 # Webcam picture-in-picture size (camera.ui units, same space the health bars
 # and banners already live in) -- width fixed, height derived per-frame from
@@ -497,6 +501,13 @@ class Game:
         self.shake_duration = shake_duration
         self.shake_magnitude = shake_magnitude
 
+    def _clear_crit_banner(self):
+        # guarded on the text still being "CRITICAL HIT!" -- if a KO or a
+        # new round already took over round_banner by the time this
+        # delayed call fires, don't stomp whatever's showing now.
+        if self.round_banner.text == "CRITICAL HIT!":
+            self.round_banner.text = ""
+
     def _apply_camera_shake(self):
         if _debug_cam is not None and _debug_cam.enabled:
             return  # never fight the user's own free-fly camera controls
@@ -742,6 +753,13 @@ class Game:
             crit_landed = self.match.p1.was_crit_hit or self.match.p2.was_crit_hit
             if crit_landed:
                 self._trigger_impact(HITSTOP_DURATION_CRIT, SHAKE_DURATION_CRIT, SHAKE_MAGNITUDE_CRIT)
+                # same round_banner spot "FIGHT!"/"K.O.!" use -- it's blank
+                # during live "fight" phase gameplay (see the phase machine
+                # above), so this doesn't fight with anything already
+                # showing there. theme.CRIT is reserved for exactly this.
+                self.round_banner.text = "CRITICAL HIT!"
+                self.round_banner.color = theme.CRIT
+                invoke(self._clear_crit_banner, delay=CRIT_BANNER_DURATION)
             else:
                 self._trigger_impact(HITSTOP_DURATION_HIT, SHAKE_DURATION_HIT, SHAKE_MAGNITUDE_HIT)
             # whichever side's health just dropped is the defender -- the

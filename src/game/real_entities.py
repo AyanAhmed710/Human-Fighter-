@@ -42,11 +42,14 @@ HEADING_OFFSET = 90.0
 # the front slice (the actual impact/recoil), not the long recovery-to-
 # neutral tail -- that part's skipped by snapping straight to the Idle
 # guard pose once match.py's HIT_REACT_DURATION ends. match.py's
-# HIT_REACT_DURATION is derived FROM this fraction (24/30 = 0.8s for 0.5 of
+# HIT_REACT_DURATION is derived FROM this fraction (12/30 = 0.4s for 0.25 of
 # HitReact's 49 frames) -- change this, change that too, or the snap fires
 # before the clip finishes playing and the pose visibly pops mid-motion
-# (exactly what happened at the old 0.35/0.25s pairing).
-HIT_REACT_FRACTION = 0.5
+# (exactly what happened at the old 0.35/0.25s pairing). Was 0.5 (0.8s) --
+# per an explicit "getting stuck for ~1s on every hit" complaint, halved
+# again to keep normal hits snappy; only the crit sequence should feel like
+# a real stun now.
+HIT_REACT_FRACTION = 0.25
 
 # How long to hold the settled-Idle pose before actually starting a punch/
 # kick/shoot clip that was thrown WHILE blocking -- purely a render-side
@@ -66,12 +69,15 @@ CRIT_GETTING_UP_CUTOFF_FRAME = 156
 
 # The 3 crit-stun clips (HitReact full + Stunned + GettingUp trimmed to
 # CRIT_GETTING_UP_CUTOFF_FRAME) run 49+65+156=270 frames total at normal
-# (1x) speed -- 270/30fps = 9.0s. Per an explicit user request to bring the
-# whole sequence down to 5s, this plays all 3 stages faster (not trimmed
-# further) at 9.0/5.0 = 1.8x: 270/(30*1.8) = 5.0s exactly. match.py's
-# CRIT_STUN_DURATION must match this real total or the stun would end
-# while GettingUp is still mid-motion -- change one, change both.
-CRIT_PLAYBACK_RATE = 1.8
+# (1x) speed -- 270/30fps = 9.0s. Brought down in 2 steps per explicit user
+# requests: first to 5s (1.8x), then to 3s (3.0x): 270/(30*3.0) = 3.0s
+# exactly. match.py's CRIT_STUN_DURATION must match this real total or the
+# stun would end while GettingUp is still mid-motion -- change one, change
+# both. NOTE: 3x is a much bigger speedup than 1.8x was -- a "getting up"
+# motion built for a real-time recovery can start looking unnaturally
+# fast/sped-up-film at this rate rather than a quick, snappy recovery.
+# Flagged, not blocked on -- dial back toward 1.8-2x if it looks off.
+CRIT_PLAYBACK_RATE = 3.0
 
 
 class RealFighterEntity:
