@@ -38,18 +38,20 @@ import mediapipe  # noqa: F401  (import order side effect only, not used directl
 import numpy as np
 from panda3d.core import AmbientLight, DirectionalLight, Filename
 from panda3d.core import Texture as PandaTexture
-from ursina import (EditorCamera, Entity, Text, Texture, Ursina, Vec3, application, camera, color,
-                     destroy, load_texture, scene, time)
+from ursina import (Button, EditorCamera, Entity, Text, Texture, Ursina, Vec3, application, camera,
+                     color, curve, destroy, invoke, load_texture, scene, time)
 
 from src.game.commentator import Commentator
 from src.game.entities import FighterEntity
 from src.game.lava_flow import LavaFlow
 from src.game.match import MAX_HEALTH
-from src.game.menu import CharacterSelect, MainMenu
+from src.game.menu import CHAR_INFO, CharacterSelect, MainMenu, NameEntry, OnlineMenu, ProfileScreen
+from src.game import netcode
 from src.game.player_input import PlayerCameraInput
+from src.game.profile import PlayerProfile
 from src.game.real_entities import RealFighterEntity
 from src.game.round_match import ROUNDS_TO_WIN, RoundMatch
-from src.game import sfx
+from src.game import sfx, theme
 
 ARENA_HALF_WIDTH = 1.0  # was 3.0 -- fighters 6 units apart, way beyond
                          # punch/kick reach. 1.0 puts them 2 units apart,
@@ -88,6 +90,7 @@ KEYBOARD_BINDINGS = {
 # so nobody can land a punch during the "ROUND 2" title card or while the
 # KO banner is still up.
 INTRO_DURATION = 1.3      # "ROUND N" title card
+VS_INTRO_DURATION = 2.6   # cinematic VS screen (round 1 only -- see _build_vs_screen)
 GO_DURATION = 0.6         # "FIGHT!" flash
 ROUND_END_DURATION = 2.6  # winner banner hangs before the next round/match-end
 
@@ -217,9 +220,31 @@ class Game:
     those beats."""
 
     def __init__(self, keyboard_mode: bool, camera1: int, camera2: int, procedural: bool,
-                 model1: str = P1_MODEL, model2: str = P2_MODEL):
+                 profile: PlayerProfile, on_return_to_menu=None,
+                 model1: str = P1_MODEL, model2: str = P2_MODEL,
+                 net=None, p1_name: str = None, p2_name: str = None):
         self.keyboard_mode = keyboard_mode
-        self.round_match = RoundMatch("Player 1", "Player 2")
+        self.profile = profile
+        self.on_return_to_menu = on_return_to_menu  # victory screen's MENU button -- see teardown()
+        # net: None for local play (unchanged), or a src/game/netcode.py
+        # NetHost/NetClient for an online 1v1 -- see that module's docstring
+        # for the "replicate actions, not state" design. net_side is which
+        # match.py seat THIS machine's local human actually plays -- host is
+        # always p1 (its PlayerProfile), joining client is always p2.
+        self.net = net
+        self.net_side = None
+        if net is not None:
+            self.net_side = "p1" if net.role == "host" else "p2"
+        # P1 is always the local PlayerProfile's seat (whoever's running the
+        # game picked their fighter first in CharacterSelect) -- P2 stays a
+        # generic label since there's no second local profile, just a second
+        # controller/webcam. See src/game/profile.py's own docstring for why
+        # this is one-profile-per-machine, not one-per-seat. For an online
+        # match, main() passes the real p1_name/p2_name (host's and client's
+        # actual usernames, swapped by netcode's handshake) instead.
+        self._p1_name = p1_name or profile.username
+        self._p2_name = p2_name or "PLAYER 2"
+        self.round_match = RoundMatch(self._p1_name, self._p2_name)
 
         # fighter1 (p1/model1) placed on the RIGHT, fighter2 (p2/model2) on
         # the LEFT -- swapped per user request. Only the world x/facing swap
@@ -238,10 +263,23 @@ class Game:
         self.input1 = self.input2 = None
         self.cam_preview1 = self.cam_preview2 = None
         if not keyboard_mode:
-            self.input1 = PlayerCameraInput(camera_index=camera1).start()
-            self.input2 = PlayerCameraInput(camera_index=camera2).start()
-            self.cam_preview1 = WebcamPreview("left", "PLAYER 1 CAM")
-            self.cam_preview2 = WebcamPreview("right", "PLAYER 2 CAM")
+            if net is None:
+                self.input1 = PlayerCameraInput(camera_index=camera1).start()
+                self.input2 = PlayerCameraInput(camera_index=camera2).start()
+                self.cam_preview1 = WebcamPreview("left", "PLAYER 1 CAM")
+                self.cam_preview2 = WebcamPreview("right", "PLAYER 2 CAM")
+            else:
+                # online: this machine's own webcam only ever drives its OWN
+                # side -- the opponent's gesture video never crosses the
+                # network (out of scope, see netcode.py's docstring), only
+                # their resulting punch/kick/shoot actions do.
+                local_input = PlayerCameraInput(camera_index=camera1).start()
+                if self.net_side == "p1":
+                    self.input1 = local_input
+                    self.cam_preview1 = WebcamPreview("left", "YOUR CAM")
+                else:
+                    self.input2 = local_input
+                    self.cam_preview2 = WebcamPreview("right", "YOUR CAM")
 
         self.rain = None  # rain disabled per user request
 
@@ -262,8 +300,12 @@ class Game:
         self.shake_magnitude = 0.0
         self._round_end_pending = False  # True between "winner detected" and
                                           # "KO hitstop finished counting down"
+        self._model1, self._model2 = model1, model2
 
         self._build_ui()
+        self._vs_screen = None
+        self._intro_duration = INTRO_DURATION
+        self._enter_round1_intro()
         sfx.play_round_announcement(self.round_match.round_num)
 
     @property
@@ -274,43 +316,45 @@ class Game:
         return self.round_match.match
 
     def _build_ui(self):
-        self.name_text1 = Text("PLAYER 1", position=(-0.85, 0.47), scale=1.3, color=color.azure)
-        self.name_text2 = Text("PLAYER 2", position=(0.55, 0.47), scale=1.3, color=color.orange)
+        self.name_text1 = Text(self.round_match.p1_name.upper(), position=(-0.85, 0.47),
+                                scale=1.5, color=theme.ACCENT_P1, **theme.font_kwargs(theme.FONT_HEAVY))
+        self.name_text2 = Text(self.round_match.p2_name.upper(), position=(0.85, 0.47),
+                                origin=(0.5, 0), scale=1.5, color=theme.ACCENT_P2,
+                                **theme.font_kwargs(theme.FONT_HEAVY))
 
-        Entity(parent=camera.ui, model="quad", color=color.dark_gray,
-               scale=(0.4, 0.045), position=(-0.6, 0.43), origin=(-0.5, 0))
-        Entity(parent=camera.ui, model="quad", color=color.dark_gray,
-               scale=(0.4, 0.045), position=(0.2, 0.43), origin=(-0.5, 0))
-        self.health_bar1 = Entity(parent=camera.ui, model="quad", color=color.lime,
-                                   scale=(0.4, 0.045), position=(-0.6, 0.43), origin=(-0.5, 0))
-        # health_bar2 anchored on its RIGHT edge (origin=0.5, position=the
-        # bar's right end at 0.6) unlike bar1's left-edge anchor -- mirrored
-        # on purpose. Before this fix both bars anchored left (origin=-0.5),
-        # so bar1 correctly drained toward screen-center as p1 lost health,
-        # but bar2 ALSO drained toward screen-center instead of draining
-        # toward its own outer/right edge under the "PLAYER 2" label --
-        # remaining green crept toward the middle instead of staying pinned
-        # under P2's name, which read as "the bar's on the wrong side" even
-        # though the label/scale_x were always wired to the correct player
-        # (confirmed earlier via forced-state/forced-health screenshot tests).
-        self.health_bar2 = Entity(parent=camera.ui, model="quad", color=color.lime,
-                                   scale=(0.4, 0.045), position=(0.6, 0.43), origin=(0.5, 0))
+        # "premium beveled bar" -- see theme.GlowBar's own docstring. Same
+        # world positions the old ad hoc quads used (bar1 left-anchored at
+        # x=-0.6, bar2 right-anchored at x=0.6 -- see the health_bar2 fix
+        # this replaced) so nothing else in the HUD needs to move.
+        self.health_bar1 = theme.GlowBar(position=(-0.6, 0.43), width=0.4, height=0.045, anchor="left")
+        self.health_bar2 = theme.GlowBar(position=(0.6, 0.43), width=0.4, height=0.045, anchor="right")
 
         # round-win pips -- ROUNDS_TO_WIN small squares per player, filled in
         # as they win rounds. Sit just under each health bar.
-        self.pips1 = [Entity(parent=camera.ui, model="quad", color=color.dark_gray,
+        self.pips1 = [Entity(parent=camera.ui, model="quad", color=theme.PANEL_LIGHT,
                               scale=(0.03, 0.03), position=(-0.6 + i * 0.045, 0.395),
                               origin=(-0.5, 0)) for i in range(ROUNDS_TO_WIN)]
-        self.pips2 = [Entity(parent=camera.ui, model="quad", color=color.dark_gray,
+        self.pips2 = [Entity(parent=camera.ui, model="quad", color=theme.PANEL_LIGHT,
                               scale=(0.03, 0.03), position=(0.6 - i * 0.045, 0.395),
                               origin=(0.5, 0)) for i in range(ROUNDS_TO_WIN)]
 
-        self.round_banner = Text("ROUND 1", position=(0, 0.12), scale=4, color=color.yellow,
-                                  origin=(0, 0))
-        self.sub_banner = Text("", position=(0, 0.0), scale=1.6, color=color.white,
-                                origin=(0, 0))
+        self.round_banner = Text("ROUND 1", position=(0, 0.12), scale=4.4, color=theme.VICTORY,
+                                  origin=(0, 0), **theme.font_kwargs(theme.FONT_DISPLAY))
+        self.sub_banner = Text("", position=(0, 0.0), scale=1.7, color=theme.TEXT,
+                                origin=(0, 0), **theme.font_kwargs(theme.FONT_HEAVY))
         self.hint_text = Text("R to restart -- ESC/q to quit -- C for free camera",
-                               position=(-0.2, -0.47), scale=0.8, color=color.gray)
+                               position=(-0.2, -0.47), scale=0.8, color=theme.TEXT_MUTED,
+                               **theme.font_kwargs(theme.FONT_BODY))
+
+        # hit-streak counter -- purely presentational, does not touch combat
+        # math anywhere (see _note_attack_landed): counts consecutive landed
+        # hits by the SAME side before the other side answers back. Hidden
+        # until 2+, same "don't clutter the gameplay area" reasoning the
+        # HUD spec called for -- a streak of 1 is just a hit, not a streak.
+        self.streak_text = Text("", position=(0, 0.34), origin=(0, 0), scale=2.2,
+                                 color=theme.VICTORY, **theme.font_kwargs(theme.FONT_DISPLAY))
+        self._streak_side = None
+        self._streak_count = 0
 
         # full-screen red pulse, alpha driven every frame in update() while
         # either player is under LOW_HEALTH_FRACTION -- z between the
@@ -320,17 +364,109 @@ class Game:
                                           color=color.rgba32(255, 0, 0, 0),
                                           scale=(4, 4), position=(0, 0), z=0.9)
 
+        self._victory_screen = None
         self._refresh_hud()
 
     def _refresh_hud(self):
-        self.health_bar1.scale_x = 0.4 * (self.match.p1.health / MAX_HEALTH)
-        self.health_bar2.scale_x = 0.4 * (self.match.p2.health / MAX_HEALTH)
-        self.health_bar1.color = _health_color(self.match.p1.health)
-        self.health_bar2.color = _health_color(self.match.p2.health)
+        self.health_bar1.set_fraction(self.match.p1.health / MAX_HEALTH, _health_color(self.match.p1.health))
+        self.health_bar2.set_fraction(self.match.p2.health / MAX_HEALTH, _health_color(self.match.p2.health))
         for i, pip in enumerate(self.pips1):
-            pip.color = color.azure if i < self.round_match.round_wins["p1"] else color.dark_gray
+            pip.color = theme.ACCENT_P1 if i < self.round_match.round_wins["p1"] else theme.PANEL_LIGHT
         for i, pip in enumerate(self.pips2):
-            pip.color = color.orange if i < self.round_match.round_wins["p2"] else color.dark_gray
+            pip.color = theme.ACCENT_P2 if i < self.round_match.round_wins["p2"] else theme.PANEL_LIGHT
+
+    def _note_attack_landed(self, attacker_side: str):
+        """Purely visual hit-streak tracking -- called once per landed hit
+        from the fight-phase block below, right after the attacker/defender
+        for that hit is already resolved. Never touches match.py/damage/
+        stun -- if this whole method vanished, combat would play out
+        identically, only the on-screen streak number would stop updating."""
+        if attacker_side == self._streak_side:
+            self._streak_count += 1
+        else:
+            self._streak_side = attacker_side
+            self._streak_count = 1
+        if self._streak_count >= 2:
+            fg = theme.ACCENT_P1 if attacker_side == "p1" else theme.ACCENT_P2
+            self.streak_text.text = f"{self._streak_count} HIT STREAK"
+            self.streak_text.color = fg
+            self.streak_text.animate_scale(2.5, duration=0.06, curve=curve.out_expo)
+            self.streak_text.animate_scale(2.2, duration=0.12, delay=0.06, curve=curve.out_expo)
+        else:
+            self.streak_text.text = ""
+
+    def _reset_streak(self):
+        self._streak_side = None
+        self._streak_count = 0
+        self.streak_text.text = ""
+
+    def _enter_round1_intro(self):
+        """Round 1 (both at match start and after a rematch) gets the full
+        cinematic VS screen instead of just the lighter "ROUND N" title
+        card every other round uses -- "the fight is about to begin" only
+        really needs to land once per match, not every round. Called from
+        __init__ and restart(); intro phase/timer are set by the caller."""
+        if self.round_match.round_num == 1:
+            self._vs_screen = self._build_vs_screen()
+            self._intro_duration = VS_INTRO_DURATION
+            self.round_banner.text = ""  # VS screen covers this beat instead
+        else:
+            self._intro_duration = INTRO_DURATION
+
+    def _build_vs_screen(self):
+        """One-shot cinematic opener, destroyed the instant the "FIGHT!"
+        flash fires (see update()'s "intro" phase transition). Sits above
+        the HUD (z lower than the HUD's default 0) but the live arena/
+        fighters are still visible/idling underneath through the scrim --
+        same continuous-shot-of-the-arena idea play_game.py's menu/select
+        vignette already uses, not a hard cut to a blank screen."""
+        p1_key, p2_key = self._model1, self._model2
+        root = Entity(parent=camera.ui, z=0.1)
+        # scrim gets its own z (see _build_victory_screen's comment on the
+        # same pattern) so it can't z-tie with the name/VS text drawn on
+        # top of it -- happened not to flicker in testing here, but nothing
+        # guarantees that stays true frame to frame without a real z gap.
+        Entity(parent=root, model="quad", color=color.rgba32(0, 0, 0, 160), scale=(4, 4),
+               position=(0, 0), z=0.5)
+
+        # x=+-0.78, not +-0.9 -- camera.ui's visible horizontal extent at a
+        # 16:9 aspect is roughly +-0.89, not +-1.0, and large FONT_DISPLAY
+        # text anchored right at that edge clipped its own first/last letter
+        # (confirmed via an isolated origin/scale test -- it clipped
+        # identically regardless of origin, so it wasn't an anchor bug, the
+        # anchor point itself was already off the visible area).
+        p1_name = Text(self.round_match.p1_name.upper(), parent=root, position=(-0.78, 0.06),
+                        origin=(-0.5, 0), scale=2.1, color=theme.ACCENT_P1,
+                        **theme.font_kwargs(theme.FONT_DISPLAY))
+        Text(CHAR_INFO.get(p1_key, {}).get("label", p1_key.upper()), parent=root,
+             position=(-0.78, -0.02), origin=(-0.5, 0), scale=1.1, color=theme.TEXT_MUTED,
+             **theme.font_kwargs(theme.FONT_BODY))
+
+        p2_name = Text(self.round_match.p2_name.upper(), parent=root, position=(0.78, 0.06),
+                        origin=(0.5, 0), scale=2.1, color=theme.ACCENT_P2,
+                        **theme.font_kwargs(theme.FONT_DISPLAY))
+        Text(CHAR_INFO.get(p2_key, {}).get("label", p2_key.upper()), parent=root,
+             position=(0.78, -0.02), origin=(0.5, 0), scale=1.1, color=theme.TEXT_MUTED,
+             **theme.font_kwargs(theme.FONT_BODY))
+
+        vs = Text("VS", parent=root, position=(0, 0.02), origin=(0, 0), scale=0.5,
+                   color=theme.DANGER, **theme.font_kwargs(theme.FONT_DISPLAY))
+
+        # names slide in from off-screen, VS pops in behind them -- kept
+        # under half a second total (spec: fast/responsive, not a slow
+        # cinematic wipe) even though the whole screen holds for
+        # VS_INTRO_DURATION before the "FIGHT!" flash replaces it.
+        p1_name.x = -1.5
+        p2_name.x = 1.9
+        p1_name.animate_x(-0.78, duration=0.35, curve=curve.out_expo)
+        p2_name.animate_x(0.78, duration=0.35, curve=curve.out_expo)
+        vs.animate_scale(3.4, duration=0.3, delay=0.15, curve=curve.out_expo)
+        return root
+
+    def _destroy_vs_screen(self):
+        if self._vs_screen is not None:
+            destroy(self._vs_screen)
+            self._vs_screen = None
 
     def _trigger_impact(self, hitstop: float, shake_duration: float, shake_magnitude: float):
         """Called the instant a hit or KO actually lands -- freezes the game
@@ -436,10 +572,11 @@ class Game:
 
         if self.phase == "intro":
             self.phase_timer += time.dt
-            if self.phase_timer >= INTRO_DURATION:
+            if self.phase_timer >= self._intro_duration:
+                self._destroy_vs_screen()
                 self.phase, self.phase_timer = "go", 0.0
                 self.round_banner.text = "FIGHT!"
-                self.round_banner.color = color.red
+                self.round_banner.color = theme.DANGER
                 self.sub_banner.text = ""
                 sfx.play("fight")
             self._sync_fighters()
@@ -459,11 +596,12 @@ class Game:
             if self.phase_timer >= ROUND_END_DURATION:
                 if self.round_match.is_match_over():
                     self.phase = "match_end"
+                    self._victory_screen = self._build_victory_screen()
                 else:
                     self.round_match.start_next_round()
                     self.phase, self.phase_timer = "intro", 0.0
                     self.round_banner.text = _round_label(self.round_match.round_num)
-                    self.round_banner.color = color.yellow
+                    self.round_banner.color = theme.VICTORY
                     self.sub_banner.text = ""
                     self._refresh_hud()
                     sfx.play_round_announcement(self.round_match.round_num)
@@ -500,7 +638,41 @@ class Game:
                                    # names as the sfx clips generated by
                                    # tools/generate_sfx.py
 
-        if self.keyboard_mode:
+        if self.net is not None:
+            # Online: exactly one local human on this machine, controlling
+            # self.net_side -- their action gets applied locally AND sent to
+            # the peer; the peer's own actions (and any "restart" control
+            # signal -- see restart()) arrive over the wire and get applied
+            # to the other side. See netcode.py's docstring for why
+            # replicating the action stream (not broadcasting full state)
+            # is enough to keep both machines' Match objects in sync.
+            local_player = self.match.p1 if self.net_side == "p1" else self.match.p2
+            remote_player = self.match.p2 if self.net_side == "p1" else self.match.p1
+            local_action = None
+            if self.keyboard_mode:
+                # only one local player now (not two sharing a keyboard) --
+                # always read the p1 bindings (1/2/3) regardless of which
+                # side this machine is actually playing, so online controls
+                # match local-mode muscle memory instead of a second scheme.
+                for key in list(_pressed_since_last_frame):
+                    side, action = KEYBOARD_BINDINGS[key]
+                    if side == "p1":
+                        local_action = action
+                _pressed_since_last_frame.clear()
+            else:
+                local_input = self.input1 if self.net_side == "p1" else self.input2
+                result = local_input.get_action_nowait()
+                if result is not None:
+                    local_action = result[0]
+            if local_action is not None:
+                _try(local_player, local_action)
+                self.net.send_action(local_action)
+            for msg in self.net.poll():
+                if msg.get("type") == "action":
+                    _try(remote_player, msg["action"])
+                elif msg.get("type") == "restart":
+                    self.restart(_from_remote=True)
+        elif self.keyboard_mode:
             for key in list(_pressed_since_last_frame):
                 side, action = KEYBOARD_BINDINGS[key]
                 player = self.match.p1 if side == "p1" else self.match.p2
@@ -549,6 +721,7 @@ class Game:
                 defender, attacker, attacker_side = self.match.p1, self.match.p2, "p2"
             else:
                 defender, attacker, attacker_side = self.match.p2, self.match.p1, "p1"
+            self._note_attack_landed(attacker_side)
             if attacker.current_action:
                 self.commentator.notify_action(attacker_side, attacker.current_action,
                                                 attacker.health, defender.health,
@@ -566,6 +739,7 @@ class Game:
             # the freeze/shake from _trigger_impact plays out first instead
             # of the KO banner popping up instantly.
             self._round_end_pending = True
+            self._reset_streak()
             side = self.round_match.report_round_result()
             winner_name = self.match.winner.name
             sfx.play("ko")
@@ -575,13 +749,17 @@ class Game:
             self._trigger_impact(HITSTOP_DURATION_KO, SHAKE_DURATION_KO, SHAKE_MAGNITUDE_KO)
             if self.round_match.is_match_over():
                 self.round_banner.text = "K.O.!"
-                self.round_banner.color = color.red
+                self.round_banner.color = theme.DANGER
                 self.sub_banner.text = f"{winner_name.upper()} WINS THE MATCH"
                 self.hint_text.text = "R to rematch -- ESC/q to quit"
                 sfx.play("match_win")
+                # local-profile win/loss -- see src/game/profile.py. P1 is
+                # always the profile's own seat (see __init__), so the
+                # match result is simply "did p1 win".
+                self.profile.record_result(winner_side == "p1")
             else:
                 self.round_banner.text = "K.O.!"
-                self.round_banner.color = color.red
+                self.round_banner.color = theme.DANGER
                 self.sub_banner.text = (f"{winner_name.upper()} WINS ROUND "
                                          f"{self.round_match.round_num}")
             self._refresh_hud()
@@ -589,13 +767,29 @@ class Game:
             sfx.stop_low_health_alarm()
             self._low_health_active = False
 
-    def restart(self):
-        self.round_match = RoundMatch("Player 1", "Player 2")
+    def restart(self, _from_remote: bool = False):
+        # _from_remote=True: this restart was triggered by the peer's
+        # "restart" message (see update()'s net-events loop) -- don't
+        # re-send it back, that would ping-pong forever. A LOCALLY triggered
+        # restart (R key, REMATCH button) is the only kind that sends, so
+        # both machines' Match objects reset together instead of one side
+        # staying on the finished match while the other's already fighting
+        # again (see netcode.py's docstring -- restart isn't a combat action
+        # so it needs its own explicit replication).
+        if self.net is not None and not _from_remote:
+            self.net.send_restart()
+        if self._victory_screen is not None:
+            destroy(self._victory_screen)
+            self._victory_screen = None
+        self._destroy_vs_screen()
+        self.round_match = RoundMatch(self._p1_name, self._p2_name)
         self.phase, self.phase_timer = "intro", 0.0
         self.round_banner.text = "ROUND 1"
-        self.round_banner.color = color.yellow
+        self.round_banner.color = theme.VICTORY
         self.sub_banner.text = ""
         self.hint_text.text = "R to restart -- ESC/q to quit -- C for free camera"
+        self._reset_streak()
+        self._enter_round1_intro()
         # force both fighters back to a fresh Idle pose -- sync()'s "very
         # first frame" branch only fires when _current_clip is None.
         self.fighter1._current_clip = None
@@ -609,6 +803,128 @@ class Game:
         camera.position = BASE_CAMERA_POS
         self._refresh_hud()
         sfx.play_round_announcement(self.round_match.round_num)
+
+    def _build_victory_screen(self):
+        """Full results presentation, built once the match (not just a
+        round) is actually over -- see the round_end->match_end transition
+        above. Sits on top of the frozen final frame of the fight (phase
+        "match_end" still calls _sync_fighters() every frame in update(),
+        just never touches match.py logic again) same as a real fighting
+        game holding on the finishing blow behind the results screen."""
+        self.streak_text.text = ""  # defensive -- _reset_streak already ran
+                                     # when the winner was first detected,
+                                     # this just guarantees it for any path
+                                     # that reaches here directly
+        winner_is_p1 = self.match.winner is self.match.p1
+        winner_name = self.match.winner.name
+        winner_color = theme.ACCENT_P1 if winner_is_p1 else theme.ACCENT_P2
+        # self._model1/self._model2 are the ACTUAL picks from character
+        # select, not the P1_MODEL/P2_MODEL defaults -- P1 can pick either
+        # fighter (see menu.py's CharacterSelect), so using the constants
+        # here would show the wrong fighter name whenever P1 picked vampire.
+        fighter_key = self._model1 if winner_is_p1 else self._model2
+
+        # root z is NEGATIVE -- closer to camera than the live HUD's default
+        # z=0, so this whole screen draws IN FRONT of it (health bars, name
+        # labels, streak counter) instead of behind it. The scrim's own z
+        # is offset further back (below) than the text drawn on top of it,
+        # same "don't let z=0 vs z=0 siblings tie" rule menu.py's character
+        # cards already follow -- without it the scrim and VICTORY text
+        # alpha-blended in an unstable order and washed each other out
+        # (confirmed via screenshot: VICTORY read as a dim smear).
+        root = Entity(parent=camera.ui, z=-0.2)
+        Entity(parent=root, model="quad", color=color.rgba32(0, 0, 0, 220), scale=(4, 4),
+               position=(0, 0), z=0.5)
+        theme.section_title(root, "VICTORY", position=(0, 0.3), scale=5.5, fg=winner_color)
+        Text(f"{winner_name.upper()}", parent=root, position=(0, 0.19), origin=(0, 0),
+             scale=2.2, color=theme.TEXT, **theme.font_kwargs(theme.FONT_HEAVY))
+        Text(fighter_key.upper(), parent=root, position=(0, 0.14), origin=(0, 0),
+             scale=1.0, color=theme.TEXT_MUTED, **theme.font_kwargs(theme.FONT_BODY))
+
+        stats = [
+            ("ROUNDS", f"{self.round_match.round_wins['p1']} - {self.round_match.round_wins['p2']}"),
+            (f"{self.profile.username.upper()}'S RECORD",
+             f"{self.profile.wins}W - {self.profile.losses}L"),
+            ("WIN RATE", f"{self.profile.win_rate * 100:.0f}%"),
+        ]
+        x = -0.28
+        for label, value in stats:
+            Text(value, parent=root, position=(x, 0.0), origin=(0, 0), scale=1.7,
+                 color=theme.TEXT, **theme.font_kwargs(theme.FONT_DISPLAY))
+            Text(label, parent=root, position=(x, -0.06), origin=(0, 0), scale=0.75,
+                 color=theme.TEXT_MUTED, **theme.font_kwargs(theme.FONT_BODY))
+            x += 0.28
+
+        def do_rematch():
+            self.restart()
+
+        def do_menu():
+            self.teardown()
+            if self.on_return_to_menu:
+                self.on_return_to_menu()
+
+        rematch_btn = Button("REMATCH", parent=root, position=(-0.14, -0.24), scale=(0.24, 0.09),
+                              color=theme.ACCENT_P2, highlight_color=theme.ACCENT_P2.tint(.25),
+                              pressed_color=theme.ACCENT_P2.tint(-.25), on_click=do_rematch)
+        theme.style_button_text(rematch_btn, font=theme.FONT_HEAVY)
+        theme.hover_button(rematch_btn, sfx_module=sfx)
+
+        menu_btn = Button("MENU", parent=root, position=(0.14, -0.24), scale=(0.24, 0.09),
+                           color=theme.PANEL_LIGHT, highlight_color=theme.PANEL_LIGHT.tint(.25),
+                           pressed_color=theme.PANEL_LIGHT.tint(-.25), on_click=do_menu)
+        theme.style_button_text(menu_btn, font=theme.FONT_HEAVY)
+        theme.hover_button(menu_btn, sfx_module=sfx)
+
+        # entrance -- quick scale-in on the headline, not the whole screen
+        # (spec: "animations should be fast and responsive", not a slow
+        # cinematic wipe over a screen the player is trying to read).
+        root.scale = 0.94
+        root.animate_scale(1.0, duration=0.22, curve=curve.out_expo)
+        return root
+
+    def teardown(self):
+        """Tears down every entity/thread this Game owns. Called by the
+        victory screen's MENU button before handing control back to
+        main()'s show_main_menu -- without this, returning to the menu
+        mid-session would leave two fighters, a live webcam thread, and the
+        whole HUD sitting under the new menu."""
+        if self.input1 is not None:
+            self.input1.stop()
+        if self.input2 is not None:
+            self.input2.stop()
+        if self.cam_preview1 is not None:
+            self.cam_preview1.destroy()
+        if self.cam_preview2 is not None:
+            self.cam_preview2.destroy()
+        if self.net is not None:
+            self.net.close()
+        for fighter in (self.fighter1, self.fighter2):
+            actor = getattr(fighter, "actor", None)
+            if actor is not None:
+                actor.cleanup()
+                actor.removeNode()
+            else:
+                root = getattr(fighter, "root", None)
+                if root is not None:
+                    destroy(root)
+        for entity in (self.name_text1, self.name_text2, self.round_banner, self.sub_banner,
+                       self.hint_text, self.low_health_overlay, self.streak_text,
+                       *self.pips1, *self.pips2):
+            destroy(entity)
+        self.health_bar1.destroy()
+        self.health_bar2.destroy()
+        if self._vs_screen is not None:
+            destroy(self._vs_screen)
+        if self._victory_screen is not None:
+            destroy(self._victory_screen)
+        if self._last_commentary_path is not None:
+            self._last_commentary_path.unlink(missing_ok=True)
+        sfx.stop_low_health_alarm()
+        # deliberately NOT stopping the background music here -- it's meant
+        # to keep playing seamlessly across menu<->match transitions (see
+        # main()'s own sfx.start_music() call, "loops for the whole
+        # session"); stopping it here would kill it permanently since
+        # nothing calls start_music() again after the menu is already up.
 
 
 _pressed_since_last_frame = set()  # populated by the module-level input() below --
@@ -644,6 +960,17 @@ _game = None  # set once character select confirms -- ursina discovers
 _lava = None  # set by main() -- animates the arena's lava (src/game/lava_flow.py)
 _menu = None  # set by main() -- MainMenu screen, live until Start is clicked
 _char_select = None  # set after Start -- CharacterSelect screen, live until confirmed
+_name_entry = None  # set by main() on first-ever launch only (no saved profile.json
+                     # yet -- see src/game/profile.py); destroyed after one submit
+_profile_screen = None  # set while the Profile screen (from the main menu) is open
+_online_menu = None  # set while the online-1v1 host/join screen is open
+_net_session = None  # set once HOST or JOIN is clicked -- a netcode.NetHost/
+                      # NetClient, live for the whole online session (setup
+                      # screens through the match itself); see _close_net_session()
+_profile = None  # the local PlayerProfile for whoever's running the game -- loaded/
+                  # created once in main(), then threaded through every screen that
+                  # shows a username (menu, select, HUD/VS/victory once wired) and
+                  # into Game so match results get recorded
 _preview_actors = {}  # model_key -> RealFighterEntity, live only during
                        # character select -- same arena spot the fighters
                        # fight at, idling + slowly turning like a showcase
@@ -883,22 +1210,83 @@ def main():
                 last_frame = preview.actor.getAnimControl("Idle").getNumFrames() - 1
                 preview.actor.pose("Idle", last_frame)
 
+    def _close_net_session():
+        global _net_session
+        if _net_session is not None:
+            _net_session.close()
+            _net_session = None
+
+    def return_to_menu_from_match():
+        # victory screen's MENU button -- Game.teardown() already ran (see
+        # its own on_click) by the time this fires, this just clears the
+        # module global so update()/input() stop dispatching to a torn-down
+        # Game and brings the menu vignette back. Also drops the net session
+        # (Game.teardown() already closed the actual socket) -- one online
+        # session is good for one match; HOST/JOIN again for a rematch
+        # against a fresh connection.
+        global _game
+        _game = None
+        _close_net_session()
+        _vignette.enabled = True
+        _vignette.color = color.rgba32(0, 0, 0, 195)
+        show_main_menu()
+
     def start_match(model1: str, model2: str):
         global _game, _char_select
+        _profile.record_pick(model1)  # model1 is always P1's pick -- whoever's
+                                       # actually running the game/menu picks first
         despawn_previews()
         destroy(_char_select)
         _char_select = None
         _vignette.enabled = False
         _game = Game(keyboard_mode=args.keyboard, camera1=args.camera1, camera2=args.camera2,
-                     procedural=args.procedural, model1=model1, model2=model2)
+                     procedural=args.procedural, model1=model1, model2=model2, profile=_profile,
+                     on_return_to_menu=return_to_menu_from_match)
 
-    def back_to_menu():
-        global _menu, _char_select
+    def start_match_online_host(model1: str, model2: str):
+        # CharacterSelect's confirm, reached via show_char_select_online --
+        # host picks BOTH fighters same as local play (see netcode.py's
+        # docstring on why fighter-picking isn't split/synced across
+        # machines), then tells the client what got picked before starting.
+        global _game, _char_select
+        _profile.record_pick(model1)
         despawn_previews()
         destroy(_char_select)
         _char_select = None
+        _vignette.enabled = False
+        _net_session.send_match_start(model1, model2, _profile.username)
+        _game = Game(keyboard_mode=args.keyboard, camera1=args.camera1, camera2=args.camera2,
+                     procedural=args.procedural, model1=model1, model2=model2, profile=_profile,
+                     on_return_to_menu=return_to_menu_from_match, net=_net_session,
+                     p2_name=_net_session.peer_username)
+
+    def start_match_online_client(model1: str, model2: str, username_p1: str):
+        # model2 is always the client's own fighter (host picked both, see
+        # start_match_online_host) -- recorded against the LOCAL profile's
+        # pick stats same as record_pick does for local/host play, just
+        # against model2 instead of model1 since this machine's human is p2.
+        global _game, _online_menu
+        _profile.record_pick(model2)
+        destroy(_online_menu)
+        _online_menu = None
+        _vignette.enabled = False
+        _game = Game(keyboard_mode=args.keyboard, camera1=args.camera1, camera2=args.camera2,
+                     procedural=args.procedural, model1=model1, model2=model2, profile=_profile,
+                     on_return_to_menu=return_to_menu_from_match, net=_net_session,
+                     p1_name=username_p1)
+
+    def back_to_menu():
+        global _menu, _char_select, _profile_screen
+        despawn_previews()
+        if _char_select is not None:
+            destroy(_char_select)
+            _char_select = None
+        if _profile_screen is not None:
+            destroy(_profile_screen)
+            _profile_screen = None
         _vignette.color = color.rgba32(0, 0, 0, 195)
-        _menu = MainMenu(on_start=show_char_select, on_quit=application.quit)
+        _menu = MainMenu(on_start=show_char_select, on_profile=show_profile,
+                         on_online=show_online_menu, on_quit=application.quit, profile=_profile)
 
     def show_char_select():
         global _menu, _char_select
@@ -907,9 +1295,108 @@ def main():
         _vignette.color = color.rgba32(0, 0, 0, 90)
         spawn_previews()
         _char_select = CharacterSelect(on_pick=highlight_pick, on_confirm=start_match,
-                                        on_back=back_to_menu)
+                                        on_back=back_to_menu, profile=_profile)
 
-    _menu = MainMenu(on_start=show_char_select, on_quit=application.quit)
+    def show_char_select_online():
+        global _online_menu, _char_select
+        destroy(_online_menu)
+        _online_menu = None
+        _vignette.color = color.rgba32(0, 0, 0, 90)
+        spawn_previews()
+        _char_select = CharacterSelect(on_pick=highlight_pick, on_confirm=start_match_online_host,
+                                        on_back=online_back, profile=_profile)
+
+    def show_profile():
+        global _menu, _profile_screen
+        destroy(_menu)
+        _menu = None
+        _profile_screen = ProfileScreen(profile=_profile, on_back=back_to_menu)
+
+    def online_back():
+        # OnlineMenu's < BACK, and CharacterSelect's < BACK when reached via
+        # the online host flow -- always drop whatever net session is in
+        # progress (listening socket or half-open connect) before returning
+        # to the main menu, so a cancelled host/join never leaves a stray
+        # socket/thread alive.
+        global _online_menu, _char_select
+        _close_net_session()
+        if _online_menu is not None:
+            destroy(_online_menu)
+            _online_menu = None
+        if _char_select is not None:
+            despawn_previews()
+            destroy(_char_select)
+            _char_select = None
+            _vignette.color = color.rgba32(0, 0, 0, 195)
+        show_main_menu()
+
+    def start_hosting():
+        global _net_session
+        _net_session = netcode.NetHost()
+        _online_menu.set_status(
+            f"Hosting on {netcode.local_ip()}:{netcode.PORT} -- waiting for opponent...")
+        invoke(_poll_host_connected, delay=0.2)
+
+    def _poll_host_connected():
+        if _net_session is None or _online_menu is None:
+            return  # user backed out while waiting
+        if _net_session.is_connected():
+            _online_menu.set_status(f"{_net_session.peer_username} connected! Pick your fighters...")
+            invoke(show_char_select_online, delay=0.6)
+        else:
+            invoke(_poll_host_connected, delay=0.2)
+
+    def start_joining(ip: str):
+        global _net_session
+        _online_menu.set_status("Connecting...")
+        try:
+            _net_session = netcode.NetClient(ip, username=_profile.username)
+        except OSError as e:
+            _online_menu.set_status(f"Couldn't connect to {ip}: {e}", color_=theme.DANGER)
+            return
+        invoke(_poll_client_start, delay=0.2)
+
+    def _poll_client_start():
+        if _net_session is None or _online_menu is None:
+            return  # user backed out while connecting
+        start = _net_session.poll_start()
+        if start is None:
+            if not _net_session.connected:
+                _online_menu.set_status("Connection lost.", color_=theme.DANGER)
+                return
+            invoke(_poll_client_start, delay=0.2)
+            return
+        model1, model2, username_p1 = start
+        _online_menu.set_status("Connected! Entering match...")
+        invoke(start_match_online_client, model1, model2, username_p1, delay=0.4)
+
+    def show_online_menu():
+        global _menu, _online_menu
+        destroy(_menu)
+        _menu = None
+        _online_menu = OnlineMenu(on_host=start_hosting, on_join=start_joining, on_back=online_back)
+
+    def show_main_menu():
+        global _menu
+        _menu = MainMenu(on_start=show_char_select, on_profile=show_profile,
+                         on_online=show_online_menu, on_quit=application.quit, profile=_profile)
+
+    def submit_name(name: str):
+        global _name_entry, _profile
+        destroy(_name_entry)
+        _name_entry = None
+        _profile = PlayerProfile.create(name)
+        show_main_menu()
+
+    global _profile, _name_entry
+    _profile = PlayerProfile.load()
+    if _profile is None:
+        # first-ever launch on this machine -- no saved profile.json yet
+        # (see src/game/profile.py). Name entry once, then straight into
+        # the main menu -- every later launch skips straight to MainMenu.
+        _name_entry = NameEntry(on_submit=submit_name)
+    else:
+        show_main_menu()
 
     app.run()
 

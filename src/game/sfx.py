@@ -155,6 +155,15 @@ def play(name: str, volume: float = 1.0):
     clip.play()
 
 
+def play_hover(volume: float = 0.18):
+    """Quiet UI-hover tick for the frontend polish pass -- reuses the same
+    click.wav the menus already play on actual clicks (see menu.py's
+    _clicky), just much quieter and un-cached-separately isn't needed since
+    _get("click") already caches it. No new audio asset added -- avoids
+    inventing a "fake" dependency for a sound the project doesn't have."""
+    play("click", volume=volume)
+
+
 def play_round_announcement(round_num: int, volume: float = NARRATOR_VOLUME):
     """Real narrator voice line for rounds 1-3 (assets/sound/Game Narrator
     sound/); falls back to the synthesized bell for any round beyond that

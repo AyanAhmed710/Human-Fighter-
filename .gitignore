@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .env
+save/
 
 data/interim/
 data/interim_hands/
